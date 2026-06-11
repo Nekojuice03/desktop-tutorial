@@ -10,10 +10,10 @@
 |----|----------|----------|------|
 | V2V(車↔協助車) | 直連 sidelink | C-V2X **PC5**（亦相容 DSRC/802.11p） | `V2V_LINK` |
 | V2I(車↔RSU 邊緣) | 蜂巢/路側上行 | C-V2X **Uu** / PC5 | `V2I_LINK` |
-| 回程(RSU↔雲) | 有線光纖骨幹(FiWi) | 固定核網/傳播延遲,無 rate 延遲 | `CLOUD_EXTRA_LATENCY` |
+| 回程(RSU↔雲) | 有線光纖骨幹(FiWi) | 固定傳播延遲 + **有限頻寬(會壅塞)** | `CLOUD_EXTRA_LATENCY` / `BACKHAUL_CAPACITY_BPS` |
 
-雲端為純邏輯節點,經「服務 RSU」以有線骨幹轉送;骨幹頻寬視為極大,故
-**資料傳輸(rate)延遲≈0**,僅保留核網繞送 + 傳播的固定延遲(反映雲端較遠)。
+雲端為純邏輯節點,經「服務 RSU」以有線骨幹轉送。回程 = 固定核網/傳播延遲
+(反映雲端較遠) + **有限頻寬的共享傳輸**(所有上雲任務共用,會排隊壅塞;見第五節)。
 
 ## 二、無線鏈路預算（V2V / V2I）
 
@@ -73,12 +73,37 @@ delay = data_bits / rate(d)             ；d > 覆蓋半徑 → ∞(卸載失敗
 ```
 排隊為 FIFO(車輛/RSU 有佇列,雲端無),見 `nodes.ComputeNodes`。
 
-## 五、設計選擇與可調項
+## 五、避免「過度用雲」的機制（文獻做法,非硬調延遲）
+
+只把 `CLOUD_EXTRA_LATENCY` 調大屬「硬調旋鈕」;本專案改採文獻主流的兩個有原理機制,
+讓用雲在模型裡**自然產生代價**:
+
+**① 有限回程頻寬 + 壅塞**(`nodes.estimate()` cloud 分支 + `ComputeNodes` 鏈路佇列)
+RSU↔雲為一條**被所有上雲任務共享的有限容量鏈路** `BACKHAUL_CAPACITY_BPS`(預設 100 Mbps),
+用 FIFO 佇列建模。上雲任務越多,回程越塞,延遲**隨負載自己上升** → 自我調節。
+```
+回程傳輸 = (上行資料 + 下行結果) / 骨幹容量      (排隊 = max(0, busy_until − 抵達時刻))
+```
+> 來源:VEC 綜述指 offloading 到 edge 可減輕 backhaul 壓力;拓樸感知負載平衡將
+> backhaul 壅塞納入路由決策(arXiv:2502.06963)。
+
+**② 使用成本 pay-per-use**(`nodes.estimate()` 回傳 `cost`,於獎勵以 `COST_W` 加權)
+反映真實計費:雲端按用量最貴、邊緣較便宜、本地/V2V 免費。
+```
+cost = 運算量(cycles) × 每 cycle 單價     (cloud 2e-10 > rsu 5e-11 > local/v2v = 0)
+獎勵 = −(延遲 + ENERGY_W·能耗/ENERGY_NORM + COST_W·cost)
+```
+> 來源:能耗-延遲-成本三目標權衡(arXiv:1805.02006);定價驅動卸載(arXiv:2011.02154)。
+
+**可調**:`COST_W=0` 關閉成本項;`BACKHAUL_CAPACITY_BPS` 越小越早壅塞、越不鼓勵用雲。
+兩者皆比硬調 `CLOUD_EXTRA_LATENCY` 更有論文說服力。
+
+## 六、設計選擇與可調項
 - **確定性通道**:不含隨機陰影(σ≈3dB)與快衰落,換取可重現性。若論文需隨機性,
   可在 `path_loss_db()` 加 log-normal 陰影項。
 - **覆蓋判斷**:以距離門檻(覆蓋半徑)代替 SINR 解碼門檻,為常見簡化。
-- **回程**:依設計為有線無 rate 延遲;若要改為有限骨幹頻寬,於 cloud 分支加一段
-  `data_bits / R_backhaul` 即可。
+- **回程**:固定傳播延遲 `CLOUD_EXTRA_LATENCY` + 有限頻寬 `BACKHAUL_CAPACITY_BPS`
+  (共享 FIFO,會壅塞);若要改為「無限快」可把容量設極大、成本權重 `COST_W=0`。
 
 ## 參考文獻
 - 3GPP TR 37.885, *Study on evaluation methodology of new V2X use cases for LTE and NR*（V2X 通道/路徑損耗模型）。

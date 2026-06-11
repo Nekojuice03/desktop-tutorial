@@ -27,7 +27,8 @@ from run_baseline import is_server, is_strong
 # 重用 Stage A 的世界來源、正規化常數、獎勵參數
 from vec_env import (MockWorld, TraciWorld, _clip01,
                      DATA_NORM, CPU_NORM, DEAD_NORM, WAIT_NORM, CONTACT_NORM,
-                     ENERGY_W, ENERGY_NORM, PENALTY_MISS, PENALTY_FAIL, SCRIPT_DIR)
+                     ENERGY_W, ENERGY_NORM, COST_W, PENALTY_MISS, PENALTY_FAIL,
+                     SCRIPT_DIR)
 
 # 多智能體專用的動作集(5 個，V2V 拆強/近)
 MA_ACTIONS = ["local", "v2v_strong", "v2v_near", "rsu", "cloud"]
@@ -215,6 +216,7 @@ class VECMultiEnv:
             self.stats["latency_n"] += 1
             self.stats["energy_sum"] += r["energy"]
             self.stats["energy_n"] += 1
+            self.stats["cost_sum"] += r["cost"]   # 本地 fallback：成本為 0
             if total <= task.deadline_s:
                 self.stats["success"] += 1
             else:
@@ -272,8 +274,10 @@ class VECMultiEnv:
         self.stats["latency_n"] += 1
         self.stats["energy_sum"] += r["energy"]
         self.stats["energy_n"] += 1
-        # 能耗正規化(同 vec_env)：讓本地/邊緣/雲的能耗差異被公平比較、尺度與延遲相近
-        reward = -(total + ENERGY_W * r["energy"] / ENERGY_NORM)
+        self.stats["cost_sum"] += r["cost"]
+        # 能耗正規化(同 vec_env) + 使用成本項(方法②)：讓本地/邊緣/雲的能耗與成本
+        # 差異被公平比較，且「過度用雲」多付一份代價。
+        reward = -(total + ENERGY_W * r["energy"] / ENERGY_NORM + COST_W * r["cost"])
         if total <= task.deadline_s:
             self.stats["success"] += 1
         else:
@@ -318,7 +322,7 @@ class VECMultiEnv:
         self.stats = {"generated": 0, "success": 0, "fail": 0, "deadline_miss": 0,
                       "infeasible": 0, "fallback": 0, "latency_sum": 0.0,
                       "latency_n": 0, "energy_sum": 0.0, "energy_n": 0,
-                      "by_target": {}}
+                      "cost_sum": 0.0, "by_target": {}}
 
     def reset(self, seed=None):
         if self.world is not None:
@@ -378,6 +382,8 @@ class VECMultiEnv:
                                   if s["latency_n"] else 0.0,
                 "avg_energy_j": (s["energy_sum"] / s["energy_n"])
                                 if s["energy_n"] else 0.0,
+                "avg_cost": (s["cost_sum"] / s["energy_n"])
+                            if s["energy_n"] else 0.0,
                 "deadline_miss": s["deadline_miss"], "infeasible": s["infeasible"],
                 "fallback": s["fallback"], "by_target": dict(s["by_target"])}
 

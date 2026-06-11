@@ -19,8 +19,10 @@ from infra_config import (
     VEHICLE_CPU, RSU_CPU, CLOUD_CPU,
     V2V_LINK, V2I_LINK,
     V2V_EXTRA_LATENCY, RSU_EXTRA_LATENCY, CLOUD_EXTRA_LATENCY,
+    BACKHAUL_CAPACITY_BPS,
     VEHICLE_ENERGY_PER_CYCLE, RSU_ENERGY_PER_CYCLE, CLOUD_ENERGY_PER_CYCLE,
     TX_POWER_W, CLOUD_BACKHAUL_POWER_W,
+    CLOUD_COST_PER_CYCLE, RSU_COST_PER_CYCLE,
 )
 
 INF = float("inf")
@@ -34,8 +36,9 @@ class ComputeNodes:
     def __init__(self):
         self._cpu = {}        # node_id -> 算力(cycle/s)
         self._busy = {}       # node_id -> busy_until(秒)
-        self._kind = {}       # node_id -> 'vehicle' / 'rsu' / 'cloud'
-        self._no_queue = set()  # 無佇列的節點(雲端)
+        self._kind = {}       # node_id -> 'vehicle' / 'rsu' / 'cloud' / 'link'
+        self._no_queue = set()  # 無佇列的節點(雲端運算)
+        self._rate = {}       # link_id -> 傳輸容量(bits/s)，給共享鏈路(回程)排隊用
 
     def register(self, node_id, cpu, kind):
         self._cpu[node_id] = cpu
@@ -44,12 +47,22 @@ class ComputeNodes:
         if kind == "cloud":
             self._no_queue.add(node_id)
 
+    def register_link(self, link_id, rate_bps):
+        """註冊一條有頻寬上限的共享鏈路(如 RSU↔雲回程)，用 FIFO 佇列建模壅塞。"""
+        self._rate[link_id] = rate_bps
+        self._busy.setdefault(link_id, 0.0)
+        self._kind[link_id] = "link"
+
     def has(self, node_id):
         return node_id in self._cpu
 
     def service_time(self, node_id, task):
         """純運算時間 = 運算量 / 算力。"""
         return task.cpu_cycles / self._cpu[node_id]
+
+    def link_service_time(self, link_id, data_bits):
+        """共享鏈路上傳這些位元的傳輸時間 = 資料量 / 容量。"""
+        return data_bits / self._rate[link_id]
 
     def wait_time(self, node_id, arrival):
         """任務在 arrival 時刻抵達，需要排隊多久才輪到它。"""
@@ -65,6 +78,12 @@ class ComputeNodes:
         self._busy[node_id] = start + self.service_time(node_id, task)
         return start - arrival
 
+    def commit_link(self, link_id, arrival, data_bits):
+        """把一筆傳輸排進共享鏈路，更新 busy_until。回傳排隊時間。"""
+        start = max(self._busy.get(link_id, 0.0), arrival)
+        self._busy[link_id] = start + self.link_service_time(link_id, data_bits)
+        return start - arrival
+
 
 def build_nodes(rsus):
     """
@@ -75,6 +94,7 @@ def build_nodes(rsus):
     for rid in rsus:
         nodes.register(rid, RSU_CPU, "rsu")
     nodes.register("cloud", CLOUD_CPU, "cloud")
+    nodes.register_link("backhaul", BACKHAUL_CAPACITY_BPS)   # RSU↔雲共享回程(會壅塞)
     return nodes
 
 
@@ -92,8 +112,7 @@ def estimate(task, target_kind, now, src_pos, nodes,
     回傳 dict：feasible, latency, energy, breakdown{uplink,wait,compute,downlink}
     """
     up_tx = down_tx = 0.0        # 車輛無線電實際資料傳輸時間(= 資料量/速率，算能耗用)
-    up_extra = down_extra = 0.0  # 固定延遲：協議存取(上行) + 雲端有線骨幹(來回)
-    backbone = 0.0               # 其中屬「有線骨幹傳輸」的部分(僅雲端，算骨幹能耗用)
+    up_extra = down_extra = 0.0  # 固定延遲：協議存取(上行) + 雲端骨幹核網/傳播(來回)
 
     if target_kind == "local":
         node_id = target_id                       # 本地：無傳輸、無存取延遲
@@ -116,10 +135,10 @@ def estimate(task, target_kind, now, src_pos, nodes,
         d = distance(src_pos, target_pos)         # 車先經 V2I 無線傳到服務基站
         up_tx   = transmission_delay(task.data_bits,   d, V2I_LINK)
         down_tx = transmission_delay(task.result_bits, d, V2I_LINK)
-        # 上行 = V2I 存取 + 骨幹(核網/傳播)；下行 = 骨幹。骨幹為有線直連、無 rate 延遲。
+        # 上行 = V2I 存取 + 骨幹核網/傳播；下行 = 骨幹核網/傳播。
+        # 骨幹的「有限頻寬傳輸 + 排隊」另計於下方(方法①)，這裡只放固定延遲。
         up_extra   = RSU_EXTRA_LATENCY + CLOUD_EXTRA_LATENCY
         down_extra = CLOUD_EXTRA_LATENCY
-        backbone   = 2.0 * CLOUD_EXTRA_LATENCY    # 來回骨幹傳輸(能耗用)
         node_id = "cloud"
 
     else:
@@ -127,12 +146,22 @@ def estimate(task, target_kind, now, src_pos, nodes,
 
     # 任一段傳輸超出範圍 → 不可達(視為任務失敗)
     if up_tx == INF or down_tx == INF:
-        return {"feasible": False, "latency": INF, "energy": INF, "breakdown": {}}
+        return {"feasible": False, "latency": INF, "energy": INF,
+                "cost": INF, "breakdown": {}}
 
-    arrival = now + up_tx + up_extra                 # 任務抵達運算節點的時刻
+    # ★方法①：雲端先過「有限頻寬」的共享回程 → FIFO 排隊。上雲任務越多越塞，
+    #   每筆回程傳輸時間 = (上行資料 + 下行結果) / 骨幹容量；佇列等待隨負載自己上升。
+    bh_wait = bh_tx = 0.0
+    if target_kind == "cloud":
+        arrival_bh = now + up_tx + up_extra          # 抵達骨幹入口(已含 V2I 存取 + 上行傳播)
+        bh_bits = task.data_bits + task.result_bits
+        bh_wait = nodes.wait_time("backhaul", arrival_bh)
+        bh_tx = nodes.link_service_time("backhaul", bh_bits)
+
+    arrival = now + up_tx + up_extra + bh_wait + bh_tx   # 任務抵達運算節點的時刻
     wait = nodes.wait_time(node_id, arrival)
     compute = nodes.service_time(node_id, task)
-    latency = up_tx + up_extra + wait + compute + down_extra + down_tx
+    latency = up_tx + up_extra + bh_wait + bh_tx + wait + compute + down_extra + down_tx
 
     # ---- 能耗 = 運算能耗 + 車輛無線傳輸能耗 + (僅雲端)回程能耗 ----
     # 依「實際執行任務的節點」選運算能耗係數，讓本地/邊緣/雲端各自不同：
@@ -151,21 +180,35 @@ def estimate(task, target_kind, now, src_pos, nodes,
         e_per_cycle = CLOUD_ENERGY_PER_CYCLE
     compute_energy = task.cpu_cycles * e_per_cycle               # 運算耗能(執行節點)
     tx_energy = TX_POWER_W * (up_tx + down_tx)                   # 車輛無線傳輸耗能(本地為0)
-    backhaul_energy = CLOUD_BACKHAUL_POWER_W * backbone           # 僅雲端的有線骨幹耗能
+    backhaul_energy = CLOUD_BACKHAUL_POWER_W * bh_tx             # 僅雲端的有線骨幹傳輸耗能
     energy = compute_energy + tx_energy + backhaul_energy
 
+    # ---- 使用成本(方法②：pay-per-use) = 運算量 × 執行節點單價 ----
+    #   雲端最貴、邊緣較便宜、本地/V2V 免費 → 讓「過度用雲」在獎勵裡有額外代價。
+    if target_kind == "cloud":
+        cost = task.cpu_cycles * CLOUD_COST_PER_CYCLE
+    elif target_kind == "rsu":
+        cost = task.cpu_cycles * RSU_COST_PER_CYCLE
+    else:  # local / v2v：自有車輛資源，不計費
+        cost = 0.0
+
     if commit:
+        if target_kind == "cloud":
+            nodes.commit_link("backhaul", now + up_tx + up_extra,
+                              task.data_bits + task.result_bits)
         nodes.commit(node_id, arrival, task)
 
     return {
         "feasible": True,
         "latency": latency,
         "energy": energy,
+        "cost": cost,
         "breakdown": {
             "uplink":   up_tx + up_extra,
-            "wait":     wait,
+            "wait":     wait + bh_wait,
             "compute":  compute,
             "downlink": down_tx + down_extra,
+            "backhaul": bh_tx,
         },
     }
 

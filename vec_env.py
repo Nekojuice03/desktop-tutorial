@@ -45,6 +45,8 @@ ACTIONS = ["local", "v2v", "rsu", "cloud"]
 ENERGY_W = 1.0       # 能耗在獎勵中的權重
 ENERGY_NORM = 5.0    # 能耗正規化常數(焦耳)：把能耗縮到與延遲(秒)相近的尺度，
                      #   避免「加入節點運算能耗」後能耗項把延遲項淹沒 → 同時穩定訓練曲線
+COST_W = 1.0         # ★方法②：使用成本(pay-per-use)在獎勵中的權重。
+                     #   設 0 = 關閉成本項；調高 = 更不鼓勵用雲(雲端 cost 最高)
 PENALTY_MISS = 2.0   # 超過 deadline 的額外懲罰
 PENALTY_FAIL = 5.0   # 動作不可達(例如選V2V卻無鄰居)的懲罰
 
@@ -312,11 +314,13 @@ class VECEnv(gym.Env):
         self.stats["latency_n"] += 1
         self.stats["energy_sum"] += r["energy"]
         self.stats["energy_n"] += 1
+        self.stats["cost_sum"] += r["cost"]
         self.stats["by_target"][kind] = self.stats["by_target"].get(kind, 0) + 1
 
-        # 獎勵 = -(延遲 + 能耗權重 × 正規化能耗)。能耗正規化讓不同層(本地/邊緣/雲)的
-        #        能耗差異能被公平比較，且尺度與延遲相近 → 訓練更穩。
-        reward = -(total + ENERGY_W * r["energy"] / ENERGY_NORM)
+        # 獎勵 = -(延遲 + 能耗權重×正規化能耗 + 成本權重×使用成本)。
+        #   能耗正規化讓不同層的能耗差異被公平比較、尺度與延遲相近 → 訓練更穩；
+        #   成本項(方法②)讓「過度用雲」多付一份代價。
+        reward = -(total + ENERGY_W * r["energy"] / ENERGY_NORM + COST_W * r["cost"])
         if total <= task.deadline_s:
             self.stats["success"] += 1
             info["result"] = "success"
@@ -332,7 +336,8 @@ class VECEnv(gym.Env):
         self.stats = {"generated": 0, "success": 0, "fail": 0,
                       "deadline_miss": 0, "infeasible": 0,
                       "latency_sum": 0.0, "latency_n": 0,
-                      "energy_sum": 0.0, "energy_n": 0, "by_target": {}}
+                      "energy_sum": 0.0, "energy_n": 0,
+                      "cost_sum": 0.0, "by_target": {}}
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -389,6 +394,8 @@ class VECEnv(gym.Env):
                               if s["latency_n"] else 0.0,
             "avg_energy_j": (s["energy_sum"] / s["energy_n"])
                             if s["energy_n"] else 0.0,
+            "avg_cost": (s["cost_sum"] / s["energy_n"])
+                        if s["energy_n"] else 0.0,
             "deadline_miss": s["deadline_miss"],
             "infeasible": s["infeasible"],
             "by_target": dict(s["by_target"]),
