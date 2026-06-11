@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<additionals>
+
+    <!-- 路由定義（vType 在 real_traffic.rou.xml 定義，會先載入）-->
+    <route id="route_506322854_0__to__238526531_0" edges="506322854#0 238526531#0"/>
+    <route id="route_506322854_0__to__288135626_0" edges="506322854#0 288135626#0"/>
+    <route id="route_506322854_0__to__288135628_0" edges="506322854#0 288135628#0"/>
+    <route id="route_506322846_0__to__506322851_0" edges="506322846#0 506322851#0"/>
+    <route id="route_506322846_0__to__288135626_0" edges="506322846#0 288135626#0"/>
+    <route id="route_238526531_0__to__506322846_0" edges="238526531#0 506322846#0"/>
+    <route id="route_1458697048_0__to__288135626_0" edges="1458697048#0 288135626#0"/>
+    <route id="route_1458697048_0__to__506322851_0" edges="1458697048#0 506322851#0"/>
+    <route id="route_1458697048_0__to__238526531_0" edges="1458697048#0 238526531#0"/>
+    <route id="route_182334379_0__to__288135628_0" edges="182334379#0 288135628#0"/>
+    <route id="route_182334379_0__to__238526531_0" edges="182334379#0 238526531#0"/>
+    <route id="route_182334379_0__to__506322851_0" edges="182334379#0 506322851#0"/>
+
+    <!-- Calibrator：不指定 type，由 Python TraCI setFlow() 動態設定 -->
+    <calibrator id="cal_506322854_0" edge="506322854#0" pos="0"/>
+    <calibrator id="cal_506322846_0" edge="506322846#0" pos="0"/>
+    <calibrator id="cal_238526531_0" edge="238526531#0" pos="0"/>
+    <calibrator id="cal_1458697048_0" edge="1458697048#0" pos="0"/>
+    <calibrator id="cal_182334379_0" edge="182334379#0" pos="0"/>
+
+</additionals>

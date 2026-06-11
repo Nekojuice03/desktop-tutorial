@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+ 
+    <!-- 車輛類型：先用單一類型，server/client 角色在 Python 端指派 -->
+    <vType id="passenger" vClass="passenger"/>
+ 
+    <!-- 持續車流：begin=0 end=3600，比例保留自真實數據 -->
+    <flow id="flow_0" type="passenger" from="238526531#0" to="506322846#0" begin="0" end="3600" vehsPerHour="84.0" departLane="0" departSpeed="max"/>
+    <flow id="flow_1" type="passenger" from="238526531#0" to="506322846#0" begin="0" end="3600" vehsPerHour="156.0" departLane="1" departSpeed="max"/>
+    <flow id="flow_2" type="passenger" from="238526531#0" to="506322846#0" begin="0" end="3600" vehsPerHour="276.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_3" type="passenger" from="506322846#0" to="506322851#0" begin="0" end="3600" vehsPerHour="144.0" departLane="0" departSpeed="max"/>
+    <flow id="flow_4" type="passenger" from="506322846#0" to="288135626#0" begin="0" end="3600" vehsPerHour="72.0" departLane="0" departSpeed="max"/>
+    <flow id="flow_5" type="passenger" from="506322846#0" to="506322851#0" begin="0" end="3600" vehsPerHour="192.0" departLane="1" departSpeed="max"/>
+    <flow id="flow_6" type="passenger" from="506322846#0" to="288135626#0" begin="0" end="3600" vehsPerHour="96.0" departLane="1" departSpeed="max"/>
+    <flow id="flow_7" type="passenger" from="506322846#0" to="506322851#0" begin="0" end="3600" vehsPerHour="132.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_8" type="passenger" from="506322846#0" to="288135626#0" begin="0" end="3600" vehsPerHour="60.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_9" type="passenger" from="1458697048#0" to="238526531#0" begin="0" end="3600" vehsPerHour="12.0" departLane="0" departSpeed="max"/>
+    <flow id="flow_10" type="passenger" from="1458697048#0" to="288135626#0" begin="0" end="3600" vehsPerHour="108.0" departLane="1" departSpeed="max"/>
+    <flow id="flow_11" type="passenger" from="1458697048#0" to="506322851#0" begin="0" end="3600" vehsPerHour="36.0" departLane="1" departSpeed="max"/>
+    <flow id="flow_12" type="passenger" from="1458697048#0" to="238526531#0" begin="0" end="3600" vehsPerHour="36.0" departLane="1" departSpeed="max"/>
+    <flow id="flow_13" type="passenger" from="1458697048#0" to="238526531#0" begin="0" end="3600" vehsPerHour="12.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_14" type="passenger" from="1458697048#0" to="288135626#0" begin="0" end="3600" vehsPerHour="84.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_15" type="passenger" from="1458697048#0" to="506322851#0" begin="0" end="3600" vehsPerHour="36.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_16" type="passenger" from="1458697048#0" to="238526531#0" begin="0" end="3600" vehsPerHour="24.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_17" type="passenger" from="182334379#0" to="288135628#0" begin="0" end="3600" vehsPerHour="72.0" departLane="0" departSpeed="max"/>
+    <flow id="flow_18" type="passenger" from="182334379#0" to="238526531#0" begin="0" end="3600" vehsPerHour="24.0" departLane="0" departSpeed="max"/>
+    <flow id="flow_19" type="passenger" from="182334379#0" to="506322851#0" begin="0" end="3600" vehsPerHour="24.0" departLane="0" departSpeed="max"/>
+    <flow id="flow_20" type="passenger" from="182334379#0" to="288135628#0" begin="0" end="3600" vehsPerHour="144.0" departLane="1" departSpeed="max"/>
+    <flow id="flow_21" type="passenger" from="182334379#0" to="238526531#0" begin="0" end="3600" vehsPerHour="60.0" departLane="1" departSpeed="max"/>
+    <flow id="flow_22" type="passenger" from="182334379#0" to="506322851#0" begin="0" end="3600" vehsPerHour="48.0" departLane="1" departSpeed="max"/>
+    <flow id="flow_23" type="passenger" from="182334379#0" to="506322851#0" begin="0" end="3600" vehsPerHour="12.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_24" type="passenger" from="182334379#0" to="288135628#0" begin="0" end="3600" vehsPerHour="120.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_25" type="passenger" from="182334379#0" to="238526531#0" begin="0" end="3600" vehsPerHour="48.0" departLane="2" departSpeed="max"/>
+    <flow id="flow_26" type="passenger" from="182334379#0" to="506322851#0" begin="0" end="3600" vehsPerHour="36.0" departLane="2" departSpeed="max"/>
+ 
+</routes>

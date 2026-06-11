@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+boundary_rerouter.add.xml
+在所有路網邊界（dead_end）加上 rerouter，讓車輛開到邊界自動消失。
+加入 osm.sumocfg 的 additional-files 清單即可。
+-->
+<additionals>
+
+    <!-- 忠孝東路二段 往西（238526531#0）終點堆積 → 邊界消失 -->
+    <rerouter id="rr_238526531" edges="238526531#0" pos="0">
+        <interval begin="0" end="86400">
+            <destProbReroute id="238526531#0" probability="1.0"/>
+        </interval>
+    </rerouter>
+
+    <!-- 新生南路一段 往北後段（288135626#0）→ dead_end 消失 -->
+    <rerouter id="rr_288135626" edges="288135626#0" pos="0">
+        <interval begin="0" end="86400">
+            <destProbReroute id="288135626#0" probability="1.0"/>
+        </interval>
+    </rerouter>
+
+    <!-- 新生南路一段 往南後段（288135628#0）→ dead_end 消失 -->
+    <rerouter id="rr_288135628" edges="288135628#0" pos="0">
+        <interval begin="0" end="86400">
+            <destProbReroute id="288135628#0" probability="1.0"/>
+        </interval>
+    </rerouter>
+
+    <!-- 忠孝東路三段 往東（506322851#0）→ dead_end 消失 -->
+    <rerouter id="rr_506322851" edges="506322851#0" pos="0">
+        <interval begin="0" end="86400">
+            <destProbReroute id="506322851#0" probability="1.0"/>
+        </interval>
+    </rerouter>
+
+</additionals>

@@ -5,14 +5,18 @@ __pycache__/
 
 # 訓練產物
 *.pt
+dqn_vec.zip
 mappo_train_log.csv
 compare_results.json
-
-# Claude 本地設定(個人權限，不入庫)
-.claude/settings.local.json
+# 比較圖(由 compare_and_plot.py 重新生成)
+fig_*.png
 
 # SUMO 執行輸出
 tripinfos.xml
 stats.xml
 edgeData.xml
 dt_states.jsonl
+cal_*_output.xml
+
+# Claude 本地設定(個人權限，不入庫)
+.claude/settings.local.json
