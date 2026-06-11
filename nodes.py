@@ -17,9 +17,8 @@
 from comm_model import distance, transmission_delay
 from infra_config import (
     VEHICLE_CPU, RSU_CPU, CLOUD_CPU,
-    V2V_BANDWIDTH_HZ, V2V_RANGE_M,
-    RSU_BANDWIDTH_HZ, RSU_RANGE_M,
-    CLOUD_EXTRA_LATENCY,
+    V2V_LINK, V2I_LINK,
+    V2V_EXTRA_LATENCY, RSU_EXTRA_LATENCY, CLOUD_EXTRA_LATENCY,
     VEHICLE_ENERGY_PER_CYCLE, RSU_ENERGY_PER_CYCLE, CLOUD_ENERGY_PER_CYCLE,
     TX_POWER_W, CLOUD_BACKHAUL_POWER_W,
 )
@@ -92,29 +91,35 @@ def estimate(task, target_kind, now, src_pos, nodes,
 
     回傳 dict：feasible, latency, energy, breakdown{uplink,wait,compute,downlink}
     """
-    up_tx = down_tx = 0.0       # 車輛無線電實際傳輸時間(算能耗用)
-    up_extra = down_extra = 0.0  # 額外固定延遲(如雲端回程，非車輛傳輸)
+    up_tx = down_tx = 0.0        # 車輛無線電實際資料傳輸時間(= 資料量/速率，算能耗用)
+    up_extra = down_extra = 0.0  # 固定延遲：協議存取(上行) + 雲端有線骨幹(來回)
+    backbone = 0.0               # 其中屬「有線骨幹傳輸」的部分(僅雲端，算骨幹能耗用)
 
     if target_kind == "local":
-        node_id = target_id
+        node_id = target_id                       # 本地：無傳輸、無存取延遲
 
     elif target_kind == "v2v":
         d = distance(src_pos, target_pos)
-        up_tx = transmission_delay(task.data_bits,   d, V2V_BANDWIDTH_HZ, V2V_RANGE_M)
-        down_tx = transmission_delay(task.result_bits, d, V2V_BANDWIDTH_HZ, V2V_RANGE_M)
+        up_tx   = transmission_delay(task.data_bits,   d, V2V_LINK)
+        down_tx = transmission_delay(task.result_bits, d, V2V_LINK)
+        up_extra = V2V_EXTRA_LATENCY              # C-V2X PC5 存取/排程開銷
         node_id = target_id
 
     elif target_kind == "rsu":
         d = distance(src_pos, target_pos)
-        up_tx = transmission_delay(task.data_bits,   d, RSU_BANDWIDTH_HZ, RSU_RANGE_M)
-        down_tx = transmission_delay(task.result_bits, d, RSU_BANDWIDTH_HZ, RSU_RANGE_M)
+        up_tx   = transmission_delay(task.data_bits,   d, V2I_LINK)
+        down_tx = transmission_delay(task.result_bits, d, V2I_LINK)
+        up_extra = RSU_EXTRA_LATENCY              # V2I/Uu 存取/排程開銷
         node_id = target_id
 
     elif target_kind == "cloud":
-        d = distance(src_pos, target_pos)   # 先傳到服務基站
-        up_tx = transmission_delay(task.data_bits,   d, RSU_BANDWIDTH_HZ, RSU_RANGE_M)
-        down_tx = transmission_delay(task.result_bits, d, RSU_BANDWIDTH_HZ, RSU_RANGE_M)
-        up_extra = down_extra = CLOUD_EXTRA_LATENCY   # 基站↔雲的回程延遲
+        d = distance(src_pos, target_pos)         # 車先經 V2I 無線傳到服務基站
+        up_tx   = transmission_delay(task.data_bits,   d, V2I_LINK)
+        down_tx = transmission_delay(task.result_bits, d, V2I_LINK)
+        # 上行 = V2I 存取 + 骨幹(核網/傳播)；下行 = 骨幹。骨幹為有線直連、無 rate 延遲。
+        up_extra   = RSU_EXTRA_LATENCY + CLOUD_EXTRA_LATENCY
+        down_extra = CLOUD_EXTRA_LATENCY
+        backbone   = 2.0 * CLOUD_EXTRA_LATENCY    # 來回骨幹傳輸(能耗用)
         node_id = "cloud"
 
     else:
@@ -146,7 +151,7 @@ def estimate(task, target_kind, now, src_pos, nodes,
         e_per_cycle = CLOUD_ENERGY_PER_CYCLE
     compute_energy = task.cpu_cycles * e_per_cycle               # 運算耗能(執行節點)
     tx_energy = TX_POWER_W * (up_tx + down_tx)                   # 車輛無線傳輸耗能(本地為0)
-    backhaul_energy = CLOUD_BACKHAUL_POWER_W * (up_extra + down_extra)  # 僅雲端的回程耗能
+    backhaul_energy = CLOUD_BACKHAUL_POWER_W * backbone           # 僅雲端的有線骨幹耗能
     energy = compute_energy + tx_energy + backhaul_energy
 
     if commit:

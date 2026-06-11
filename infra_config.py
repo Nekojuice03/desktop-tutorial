@@ -19,10 +19,24 @@ V2V_RANGE_M      = 150        # 車對車通訊半徑(公尺)
 RSU_BANDWIDTH_HZ = 20e6       # 基站頻寬
 V2V_BANDWIDTH_HZ = 10e6       # V2V 頻寬
 
-# ========== 通訊通道模型（資料速率隨距離衰減）==========
-REF_DISTANCE_M    = 10.0      # 參考距離(公尺)：此距離內視為最佳訊號
-REF_SNR           = 100.0     # 參考距離處的訊雜比(線性值，約 20 dB)
-PATHLOSS_EXPONENT = 3.0       # 路徑損耗指數(都市約 2.7~3.5，越大衰減越快)
+# ========== 無線鏈路預算（C-V2X / 3GPP，確定性路徑損耗）==========
+# 取代舊的「REF_SNR 任意常數」模型，改用真實鏈路預算：
+#   發射功率(dBm) − 路徑損耗(dB) = 接收功率 → 對雜訊算 SINR → Shannon 速率。
+# 參數依車聯網文獻常用值(C-V2X / 3GPP TR 37.885，5.9GHz ITS 頻段)：
+CARRIER_FREQ_HZ  = 5.9e9      # 載波頻率(5.9 GHz，DSRC/C-V2X 共用之 ITS 頻段)
+VEH_TX_POWER_DBM = 23.0       # 車輛發射功率(3GPP C-V2X 規範 23 dBm ≈ 0.2W)，V2V/V2I 上行皆用此
+NOISE_PSD_DBM_HZ = -174.0     # 熱雜訊功率譜密度(dBm/Hz)
+NOISE_FIGURE_DB  = 9.0        # 接收端雜訊指數(車載/路側收發機典型值)
+PL_REF_DIST_M    = 1.0        # 路徑損耗參考距離 d0(公尺)，FSPL 由此起算
+PL_EXP_V2V       = 3.0        # V2V 都市路徑損耗指數(車間多遮蔽，衰減快)
+PL_EXP_V2I       = 2.7        # V2I 都市(基站架高、視距較好 → 衰減略慢)
+
+# 鏈路設定檔：把每條無線鏈路的頻寬/覆蓋/發射功率/路徑損耗指數打包，
+# 供 comm_model 計算 SINR→速率→傳輸延遲。三層各自參數不同 → 速率自然分層。
+V2V_LINK = {"bandwidth": V2V_BANDWIDTH_HZ, "range": V2V_RANGE_M,
+            "tx_dbm": VEH_TX_POWER_DBM, "pl_exp": PL_EXP_V2V}
+V2I_LINK = {"bandwidth": RSU_BANDWIDTH_HZ, "range": RSU_RANGE_M,
+            "tx_dbm": VEH_TX_POWER_DBM, "pl_exp": PL_EXP_V2I}
 
 # ========== 三層節點算力 (CPU 週期/秒，越大越快) ==========
 # 對應你的優先級：車最弱 → 基站中等 → 雲最強
@@ -33,12 +47,18 @@ STRONG_RATIO     = 0.35      # server 中強車比例(近未來車聯網成熟�
 RSU_CPU          = 8.0e9     # 基站（故意略低於強車，讓近距離 V2V 有優勢）
 CLOUD_CPU        = 50.0e9    # 雲端（最強，但延遲高）
 
-# ========== 各層「額外」固定延遲 (秒) ==========
-# 反映卸載優先級 車 < 基站 < 雲：越往上層傳輸延遲越高
-LOCAL_EXTRA_LATENCY = 0.000   # 本地執行，無傳輸
-V2V_EXTRA_LATENCY   = 0.005   # 5 ms（車對車，近）
-RSU_EXTRA_LATENCY   = 0.020   # 20 ms（車→基站）
-CLOUD_EXTRA_LATENCY = 0.300   # 300 ms（基站→雲，回程慢；調高讓近處強車V2V有機會贏過雲）
+# ========== 各層「協議存取」固定延遲 (秒) ==========
+# 純 Shannon 速率只算「資料推送時間」，省略了 MAC 競爭/排程/協議握手的固定開銷。
+# 這裡補上各無線鏈路的「存取延遲」，由 nodes.estimate() 在上行時實際計入(更貼近實際)：
+LOCAL_EXTRA_LATENCY = 0.000   # 本地執行，無傳輸、無存取
+V2V_EXTRA_LATENCY   = 0.005   # 5 ms（C-V2X PC5 直連，分散式排程，存取快）
+RSU_EXTRA_LATENCY   = 0.020   # 20 ms（V2I/Uu，含基站排程；走雲端也先經此 V2I 存取）
+
+# ========== 雲端回程（RSU↔雲，有線骨幹）==========
+# 依設計：回程為光纖直連，頻寬視為極大 → 「傳輸(rate)延遲」≈0，不隨資料量變化；
+# 但保留核網繞送 + 傳播的「固定延遲」(單向)，反映雲端在物理上較遠。來回各計一次。
+# ★這是最影響三層取捨的旋鈕：值越大，近處邊緣/V2V 越容易贏過雲端。
+CLOUD_EXTRA_LATENCY = 0.040   # 40 ms 單向(≈80ms RTT)，區域型雲資料中心的實際區間(20~100ms)
 
 # ========== 能耗係數 ==========
 # 各層「運算能耗」係數 (焦耳/cycle)：誰執行任務，就用誰的係數計算運算耗能。

@@ -22,7 +22,7 @@ from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
 from nodes import build_nodes, estimate, INF
 from task_model import TaskGenerator
 from infra_config import (VEHICLE_CPU, STRONG_VEHICLE_CPU, STRONG_RATIO,
-                          V2V_BANDWIDTH_HZ, V2V_RANGE_M, RSU_RANGE_M, load_rsus)
+                          V2V_LINK, V2V_RANGE_M, RSU_RANGE_M, load_rsus)
 from run_baseline import is_server, is_strong
 # 重用 Stage A 的世界來源、正規化常數、獎勵參數
 from vec_env import (MockWorld, TraciWorld, _clip01,
@@ -193,7 +193,7 @@ class VECMultiEnv:
             if nbrs and nbrs[0] not in assign:
                 sid = nbrs[0]
                 hop = transmission_delay(task.data_bits, distance(cpos, self.servers[sid]),
-                                         V2V_BANDWIDTH_HZ, V2V_RANGE_M)
+                                         V2V_LINK)
                 if hop == INF:
                     self._fallback_local(task, cpos, now)
                     continue

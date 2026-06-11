@@ -26,7 +26,7 @@ from comm_model import (distance, transmission_delay,
                         neighbors_in_range, rsus_in_range)
 from nodes import build_nodes, estimate, INF
 from task_model import TaskGenerator
-from infra_config import (VEHICLE_CPU, V2V_BANDWIDTH_HZ, V2V_RANGE_M,
+from infra_config import (VEHICLE_CPU, V2V_LINK, V2V_RANGE_M,
                           RSU_RANGE_M, load_rsus)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -111,7 +111,7 @@ def process_step(now, dt, veh_states, roles, nodes, gen, rsus, stats,
             sid = near_servers[0]
             holder_id, holder_pos = sid, servers[sid]
             hop = transmission_delay(task.data_bits, distance(cpos, holder_pos),
-                                     V2V_BANDWIDTH_HZ, V2V_RANGE_M)
+                                     V2V_LINK)
             stats["assigned_to_server"] += 1
         else:
             stats["self_served"] += 1

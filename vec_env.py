@@ -27,7 +27,7 @@ from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
                         neighbors_in_range, rsus_in_range, contact_time)
 from nodes import build_nodes, estimate, INF
 from task_model import TaskGenerator
-from infra_config import (VEHICLE_CPU, V2V_BANDWIDTH_HZ, V2V_RANGE_M,
+from infra_config import (VEHICLE_CPU, V2V_LINK, V2V_RANGE_M,
                           RSU_RANGE_M, load_rsus)
 from run_baseline import is_server   # 重用角色分配
 
@@ -254,7 +254,7 @@ class VECEnv(gym.Env):
                 sid = nbrs[0]
                 holder_id, holder_pos = sid, self.servers[sid]
                 hop = transmission_delay(task.data_bits, distance(cpos, holder_pos),
-                                         V2V_BANDWIDTH_HZ, V2V_RANGE_M)
+                                         V2V_LINK)
                 if hop == INF:
                     continue
             self.pending.append(
