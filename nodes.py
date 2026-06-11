@@ -39,13 +39,20 @@ class ComputeNodes:
         self._kind = {}       # node_id -> 'vehicle' / 'rsu' / 'cloud' / 'link'
         self._no_queue = set()  # 無佇列的節點(雲端運算)
         self._rate = {}       # link_id -> 傳輸容量(bits/s)，給共享鏈路(回程)排隊用
+        self._eppc = {}       # node_id -> 每 cycle 耗能(J/cycle)，未設定者用該層預設值
 
-    def register(self, node_id, cpu, kind):
+    def register(self, node_id, cpu, kind, energy_per_cycle=None):
         self._cpu[node_id] = cpu
         self._busy.setdefault(node_id, 0.0)
         self._kind[node_id] = kind
+        if energy_per_cycle is not None:    # 異質能耗(如強車依 κf² 較耗能)
+            self._eppc[node_id] = energy_per_cycle
         if kind == "cloud":
             self._no_queue.add(node_id)
+
+    def energy_per_cycle(self, node_id, default):
+        """節點的每 cycle 耗能；未個別設定時回傳該層預設值。"""
+        return self._eppc.get(node_id, default)
 
     def register_link(self, link_id, rate_bps):
         """註冊一條有頻寬上限的共享鏈路(如 RSU↔雲回程)，用 FIFO 佇列建模壅塞。"""
@@ -99,7 +106,7 @@ def build_nodes(rsus):
 
 
 def estimate(task, target_kind, now, src_pos, nodes,
-             target_id=None, target_pos=None, commit=False):
+             target_id=None, target_pos=None, commit=False, contact_s=None):
     """
     估算把 task 放到某目標執行的總延遲與能耗。
     target_kind: 'local' | 'v2v' | 'rsu' | 'cloud'
@@ -108,8 +115,13 @@ def estimate(task, target_kind, now, src_pos, nodes,
       rsu   : 卸載到基站(target_id/target_pos = 基站)
       cloud : 經由服務基站轉送到雲端(target_pos = 該服務基站位置)
     commit=True 時會真的佔用該節點(更新佇列)；估算多選項時用 False。
+    contact_s：來源與目標的「連線可維持時間」(由呼叫端依雙方位置/速度算出)。
+      ★移動性約束(sojourn time constraint，文獻標準)：若總延遲 > contact_s，
+        代表任務完成前連線就斷(車駛離範圍) → 卸載失敗(link_break)。
+        None = 不檢查(如本地執行)。
 
-    回傳 dict：feasible, latency, energy, breakdown{uplink,wait,compute,downlink}
+    回傳 dict：feasible, link_break, latency, energy, cost,
+              breakdown{uplink,wait,compute,downlink,backhaul}
     """
     up_tx = down_tx = 0.0        # 車輛無線電實際資料傳輸時間(= 資料量/速率，算能耗用)
     up_extra = down_extra = 0.0  # 固定延遲：協議存取(上行) + 雲端骨幹核網/傳播(來回)
@@ -146,8 +158,8 @@ def estimate(task, target_kind, now, src_pos, nodes,
 
     # 任一段傳輸超出範圍 → 不可達(視為任務失敗)
     if up_tx == INF or down_tx == INF:
-        return {"feasible": False, "latency": INF, "energy": INF,
-                "cost": INF, "breakdown": {}}
+        return {"feasible": False, "link_break": False, "latency": INF,
+                "energy": INF, "cost": INF, "breakdown": {}}
 
     # ★方法①：雲端先過「有限頻寬」的共享回程 → FIFO 排隊。上雲任務越多越塞，
     #   每筆回程傳輸時間 = (上行資料 + 下行結果) / 骨幹容量；佇列等待隨負載自己上升。
@@ -163,6 +175,13 @@ def estimate(task, target_kind, now, src_pos, nodes,
     compute = nodes.service_time(node_id, task)
     latency = up_tx + up_extra + bh_wait + bh_tx + wait + compute + down_extra + down_tx
 
+    # ---- ★移動性約束(方法②之後新增)：任務完成前連線就斷 → 卸載失敗 ----
+    # 取保守的 sojourn time constraint：總延遲 ≤ 連線可維持時間。
+    # 這讓觀測中的 contact 特徵真正影響結果，agent 才有誘因學「別丟給快離開的對象」。
+    if contact_s is not None and latency > contact_s:
+        return {"feasible": False, "link_break": True, "latency": INF,
+                "energy": INF, "cost": INF, "breakdown": {}}
+
     # ---- 能耗 = 運算能耗 + 車輛無線傳輸能耗 + (僅雲端)回程能耗 ----
     # 依「實際執行任務的節點」選運算能耗係數，讓本地/邊緣/雲端各自不同：
     #   local / v2v → 由車輛(弱或強車)執行 → 車輛係數
@@ -173,7 +192,8 @@ def estimate(task, target_kind, now, src_pos, nodes,
     #   (2) 資源全擠雲/邊：先前卸載幾乎零能耗，使本地永遠吃虧；現在卸載要計運算能耗，
     #       輕任務在本地反而更省 → 卸載決策回到合理的分層分工。
     if target_kind in ("local", "v2v"):
-        e_per_cycle = VEHICLE_ENERGY_PER_CYCLE
+        # 依執行車輛查個別係數(強車依 κf² 較耗能)，未設定者用弱車預設值
+        e_per_cycle = nodes.energy_per_cycle(node_id, VEHICLE_ENERGY_PER_CYCLE)
     elif target_kind == "rsu":
         e_per_cycle = RSU_ENERGY_PER_CYCLE
     else:  # cloud
@@ -200,6 +220,7 @@ def estimate(task, target_kind, now, src_pos, nodes,
 
     return {
         "feasible": True,
+        "link_break": False,
         "latency": latency,
         "energy": energy,
         "cost": cost,

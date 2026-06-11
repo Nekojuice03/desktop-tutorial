@@ -47,6 +47,7 @@ def run_episodes(env, mode, algo=None, episodes=8, seed0=1000):
     succ, lat, ener = [], [], []
     dist = Counter()
     for ep in range(episodes):
+        rng = np.random.default_rng(seed0 + ep)   # Random 基準的動作抽樣也固定種子(可重現)
         obs, state = env.reset(seed=seed0 + ep)
         info = {"episode_stats": {"success_rate": 0.0, "avg_latency_ms": 0.0,
                                   "avg_energy_j": 0.0, "by_target": {}}}
@@ -64,7 +65,7 @@ def run_episodes(env, mode, algo=None, episodes=8, seed0=1000):
             if mode == "greedy":
                 actions = env.greedy_actions()
             elif mode == "random":
-                actions = np.random.randint(0, env.n_actions, size=k)
+                actions = rng.integers(0, env.n_actions, size=k)
             elif mode == "mappo":
                 actions = algo.act_greedy(obs)
             else:

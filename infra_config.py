@@ -41,8 +41,10 @@ V2I_LINK = {"bandwidth": RSU_BANDWIDTH_HZ, "range": RSU_RANGE_M,
 # ========== 三層節點算力 (CPU 週期/秒，越大越快) ==========
 # 對應你的優先級：車最弱 → 基站中等 → 雲最強
 # 車輛再分強弱：弱車(多數)算不動重任務，強車(少數)能當 V2V 幫手
+# ★算力一律解讀為「多核聚合 cycles/s」(單核 12GHz 物理上不存在)：
+#   弱車 ≈ 1核×1.0GHz；強車 ≈ 8核×1.5GHz 聚合 12GHz(車載高效能平台)。
 VEHICLE_CPU      = 1.0e9     # 弱 server / client 的算力（最弱）
-STRONG_VEHICLE_CPU = 12.0e9  # 強 server 的算力（V2V 幫手，故意高於基站）
+STRONG_VEHICLE_CPU = 12.0e9  # 強 server 的算力（多核聚合；V2V 幫手，故意高於基站）
 STRONG_RATIO     = 0.35      # server 中強車比例(近未來車聯網成熟場景，三至四成車有運算餘裕)
 RSU_CPU          = 8.0e9     # 基站（故意略低於強車，讓近距離 V2V 有優勢）
 CLOUD_CPU        = 50.0e9    # 雲端（最強，但延遲高）
@@ -68,7 +70,11 @@ BACKHAUL_CAPACITY_BPS = 100e6  # 100 Mbps 共享骨幹(RSU↔雲)；所有上雲
 # 邊緣居中，車輛最低。★這同時修正了「邊緣與雲端能耗一樣」的問題：
 #   先前只算傳輸能耗，而 RSU 與 Cloud 的傳輸路徑相同 → 能耗必然相等。
 #   現在三層各有獨立的運算能耗係數，邊緣與雲端自然不同。
-VEHICLE_ENERGY_PER_CYCLE = 1e-9   # 車輛(本地/V2V 幫手)每個 CPU 週期的耗能(焦耳/cycle)
+VEHICLE_ENERGY_PER_CYCLE = 1e-9   # 弱車(本地/V2V)每 cycle 耗能(焦耳/cycle)，1核×1.0GHz
+# ★強車依 DVFS 能耗定律 E/cycle ∝ κf²(以「單核頻率」計)：強車為 8核×1.5GHz，
+#   per-cycle 能耗 = (1.5/1.0)² × 弱車 = 2.25e-9。修正先前「強車更快又不更耗能」
+#   的免費午餐(違反物理)，讓 v2v_strong 在能耗面付出合理代價。
+STRONG_VEHICLE_ENERGY_PER_CYCLE = 2.25e-9
 RSU_ENERGY_PER_CYCLE     = 2e-9   # 邊緣基站(中等)
 CLOUD_ENERGY_PER_CYCLE   = 4e-9   # 雲端(最高，含資料中心散熱/PUE 開銷)
 

@@ -66,12 +66,23 @@ delay = data_bits / rate(d)             ；d > 覆蓋半徑 → ∞(卸載失敗
 ## 四、延遲與能耗總式（`nodes.estimate()`）
 
 ```
-總延遲 = 上行傳輸 + 上行存取 + (雲)骨幹 + 排隊 + 運算 + (雲)骨幹 + 下行傳輸
-能耗  = 運算能耗(依執行節點係數)
-       + 車輛無線傳輸能耗 (Ptx_W × 無線傳輸時間)
-       + (僅雲)有線骨幹能耗 (Pbackhaul_W × 骨幹延遲)
+總延遲 = 上行傳輸 + 上行存取 + (雲)骨幹排隊+傳輸 + 排隊 + 運算 + (雲)骨幹 + 下行傳輸
+能耗  = 運算能耗(依執行節點係數;強車依 κf² 較高)
+       + 車輛無線傳輸能耗 (Ptx_W × 無線傳輸時間，含 client→server 指派跳)
+       + (僅雲)有線骨幹能耗 (Pbackhaul_W × 骨幹傳輸時間)
 ```
 排隊為 FIFO(車輛/RSU 有佇列,雲端無),見 `nodes.ComputeNodes`。
+
+**移動性約束(sojourn time constraint)**:每個卸載動作由環境計算來源與目標的
+連線可維持時間 `contact_s`(`comm_model.contact_time`,相對運動解析解),
+`estimate()` 檢查 `總延遲 ≤ contact_s`,否則判 **link_break 失敗** ——
+任務完成前車輛駛離通訊範圍。v2v 取兩車相對運動、rsu/cloud 取車對靜止基站、
+本地不檢查。這使觀測中的 contact 特徵真正影響獎勵,agent 有誘因學
+「別把任務丟給快離開的對象」(mobility-aware offloading 文獻標準作法)。
+
+**異質車輛能耗(DVFS κf²)**:強車為多核聚合 12 GHz(如 8核×1.5GHz),
+依 E/cycle ∝ κf²(以單核頻率計)其每 cycle 能耗 = (1.5/1.0)² = 2.25× 弱車
+(`STRONG_VEHICLE_ENERGY_PER_CYCLE`)。強車「更快但更耗能」,移除免費午餐。
 
 ## 五、避免「過度用雲」的機制（文獻做法,非硬調延遲）
 

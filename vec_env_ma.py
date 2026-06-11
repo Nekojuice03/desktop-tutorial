@@ -22,7 +22,9 @@ from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
 from nodes import build_nodes, estimate, INF
 from task_model import TaskGenerator
 from infra_config import (VEHICLE_CPU, STRONG_VEHICLE_CPU, STRONG_RATIO,
-                          V2V_LINK, V2V_RANGE_M, RSU_RANGE_M, load_rsus)
+                          STRONG_VEHICLE_ENERGY_PER_CYCLE,
+                          V2V_LINK, V2V_RANGE_M, RSU_RANGE_M,
+                          V2V_EXTRA_LATENCY, TX_POWER_W, load_rsus)
 from run_baseline import is_server, is_strong
 # 重用 Stage A 的世界來源、正規化常數、獎勵參數
 from vec_env import (MockWorld, TraciWorld, _clip01,
@@ -32,7 +34,7 @@ from vec_env import (MockWorld, TraciWorld, _clip01,
 
 # 多智能體專用的動作集(5 個，V2V 拆強/近)
 MA_ACTIONS = ["local", "v2v_strong", "v2v_near", "rsu", "cloud"]
-MA_N_FEATURES = 17
+MA_N_FEATURES = 18   # +1：回程(backhaul)佇列等待 —— agent 須看得到雲端壅塞
 MAX_AGENTS_NORM = 20.0
 
 
@@ -65,8 +67,8 @@ class VECMultiEnv:
         self.n_features = MA_N_FEATURES
         self.n_actions = len(MA_ACTIONS)
         self.rsu_ids = sorted(self.rsus.keys())
-        # 全域狀態：各基站負載 + 活躍數 + 平均本地負載 + 車數 + 空閒強車數
-        self.state_dim = len(self.rsu_ids) + 4
+        # 全域狀態：各基站負載 + 回程壅塞 + 活躍數 + 平均本地負載 + 車數 + 強車數
+        self.state_dim = len(self.rsu_ids) + 5
 
         self.world = None
         self._ep = 0
@@ -80,8 +82,24 @@ class VECMultiEnv:
                                        self.veh_states[nb_id]["angle"])
         return contact_time(holder_pos, hv, nb_pos, nv, V2V_RANGE_M)
 
+    def _contact_for(self, ctx, kind, tid, tpos):
+        """
+        此動作的「連線可維持時間」(交給 estimate 做移動性檢查)：
+          v2v：持有車與目標車的相對運動；rsu/cloud：持有車對(靜止)服務基站；
+          local：不需連線 → None(不檢查)。
+        """
+        if kind in ("v2v_strong", "v2v_near"):
+            return self._contact(ctx["holder_id"], ctx["holder_pos"], tid, tpos)
+        if kind in ("rsu", "cloud"):
+            hv = velocity_from_speed_angle(
+                self.veh_states[ctx["holder_id"]]["speed"],
+                self.veh_states[ctx["holder_id"]]["angle"]) \
+                if ctx["holder_id"] in self.veh_states else (0.0, 0.0)
+            return contact_time(ctx["holder_pos"], hv, tpos, (0.0, 0.0), RSU_RANGE_M)
+        return None  # local
+
     # ---------- 單一任務情境 ----------
-    def _build_context(self, task, holder_id, holder_pos, now, hop):
+    def _build_context(self, task, holder_id, holder_pos, now, hop, hop_energy=0.0):
         # 最近基站
         near_rsu = rsus_in_range(holder_pos, self.rsus, RSU_RANGE_M)
         rsu_id = near_rsu[0] if near_rsu else None
@@ -97,7 +115,7 @@ class VECMultiEnv:
         strong_id = strong_nbrs[0] if strong_nbrs else None
         strong_pos = self.veh_states[strong_id]["pos"] if strong_id else None
         return {"task": task, "holder_id": holder_id, "holder_pos": holder_pos,
-                "now": now, "hop": hop,
+                "now": now, "hop": hop, "hop_energy": hop_energy,
                 "holder_strong": holder_id in self.strong,
                 "rsu_id": rsu_id, "rsu_pos": rsu_pos,
                 "near_id": near_id, "near_pos": near_pos,
@@ -149,11 +167,13 @@ class VECMultiEnv:
             _clip01(nr_dist / V2V_RANGE_M),           # 最近鄰車多遠
             nr_strong,                                # 最近鄰車本身是不是強車
             _clip01(nr_contact / CONTACT_NORM),
+            _clip01(self.nodes.wait_time("backhaul", now) / WAIT_NORM),  # 回程壅塞
         ], dtype=np.float32)
 
     def _global_state(self, now, n_active):
         parts = [_clip01(self.nodes.wait_time(rid, now) / WAIT_NORM)
                  for rid in self.rsu_ids]
+        parts.append(_clip01(self.nodes.wait_time("backhaul", now) / WAIT_NORM))  # 回程壅塞
         parts.append(_clip01(n_active / MAX_AGENTS_NORM))
         local_waits = [self.nodes.wait_time(c["holder_id"], now)
                        for _, c in self._active] if self._active else [0.0]
@@ -177,8 +197,11 @@ class VECMultiEnv:
                 else:
                     self.roles[vid] = "client"
             if not self.nodes.has(vid):
-                cpu = STRONG_VEHICLE_CPU if vid in self.strong else VEHICLE_CPU
-                self.nodes.register(vid, cpu, "vehicle")
+                if vid in self.strong:   # 強車：算力高但依 κf² 每 cycle 較耗能
+                    self.nodes.register(vid, STRONG_VEHICLE_CPU, "vehicle",
+                                        energy_per_cycle=STRONG_VEHICLE_ENERGY_PER_CYCLE)
+                else:
+                    self.nodes.register(vid, VEHICLE_CPU, "vehicle")
         self.servers = {vid: s["pos"] for vid, s in veh_states.items()
                         if self.roles.get(vid) == "server"}
         clients = [vid for vid in veh_states if self.roles.get(vid) == "client"]
@@ -193,13 +216,16 @@ class VECMultiEnv:
             nbrs = neighbors_in_range(cpos, others, V2V_RANGE_M)
             if nbrs and nbrs[0] not in assign:
                 sid = nbrs[0]
-                hop = transmission_delay(task.data_bits, distance(cpos, self.servers[sid]),
-                                         V2V_LINK)
-                if hop == INF:
+                hop_tx = transmission_delay(task.data_bits,
+                                            distance(cpos, self.servers[sid]), V2V_LINK)
+                if hop_tx == INF:
                     self._fallback_local(task, cpos, now)
                     continue
+                # 指派跳(client→server)：補上 PC5 存取開銷與傳輸能耗(先前漏算)
+                hop = V2V_EXTRA_LATENCY + hop_tx
                 assign[sid] = self._build_context(task, sid, self.servers[sid],
-                                                  now + hop, hop)
+                                                  now + hop, hop,
+                                                  hop_energy=TX_POWER_W * hop_tx)
             else:
                 self._fallback_local(task, cpos, now)
         return now, assign
@@ -262,22 +288,29 @@ class VECMultiEnv:
 
         # V2V 兩種動作在成本模型裡都是 "v2v"
         est_kind = "v2v" if kind in ("v2v_strong", "v2v_near") else kind
+        # 移動性約束：完成前駛離範圍 → link_break 失敗(讓 contact 觀測真正影響結果)
+        contact_s = self._contact_for(ctx, kind, tid, tpos)
         r = estimate(task, est_kind, now, pos, self.nodes,
-                     target_id=tid, target_pos=tpos, commit=True)
+                     target_id=tid, target_pos=tpos, commit=True,
+                     contact_s=contact_s)
         if not r["feasible"]:
             self.stats["fail"] += 1
-            self.stats["infeasible"] += 1
+            if r.get("link_break"):
+                self.stats["link_break"] += 1
+            else:
+                self.stats["infeasible"] += 1
             return -PENALTY_FAIL
 
         total = ctx["hop"] + r["latency"]
+        energy = r["energy"] + ctx["hop_energy"]   # 含指派跳(client→server)的傳輸能耗
         self.stats["latency_sum"] += total
         self.stats["latency_n"] += 1
-        self.stats["energy_sum"] += r["energy"]
+        self.stats["energy_sum"] += energy
         self.stats["energy_n"] += 1
         self.stats["cost_sum"] += r["cost"]
         # 能耗正規化(同 vec_env) + 使用成本項(方法②)：讓本地/邊緣/雲的能耗與成本
         # 差異被公平比較，且「過度用雲」多付一份代價。
-        reward = -(total + ENERGY_W * r["energy"] / ENERGY_NORM + COST_W * r["cost"])
+        reward = -(total + ENERGY_W * energy / ENERGY_NORM + COST_W * r["cost"])
         if total <= task.deadline_s:
             self.stats["success"] += 1
         else:
@@ -309,8 +342,10 @@ class VECMultiEnv:
                 if not reach:
                     continue
                 est_kind = "v2v" if kind in ("v2v_strong", "v2v_near") else kind
+                # 與 RL 同樣受移動性約束(公平)：會斷線的選項視為不可行
                 r = estimate(ctx["task"], est_kind, ctx["now"], ctx["holder_pos"],
-                             self.nodes, target_id=tid, target_pos=tpos, commit=False)
+                             self.nodes, target_id=tid, target_pos=tpos, commit=False,
+                             contact_s=self._contact_for(ctx, kind, tid, tpos))
                 if r["feasible"]:
                     lat = ctx["hop"] + r["latency"]
                     if lat < best_lat:
@@ -320,8 +355,9 @@ class VECMultiEnv:
 
     def _reset_stats(self):
         self.stats = {"generated": 0, "success": 0, "fail": 0, "deadline_miss": 0,
-                      "infeasible": 0, "fallback": 0, "latency_sum": 0.0,
-                      "latency_n": 0, "energy_sum": 0.0, "energy_n": 0,
+                      "infeasible": 0, "link_break": 0, "fallback": 0,
+                      "latency_sum": 0.0, "latency_n": 0,
+                      "energy_sum": 0.0, "energy_n": 0,
                       "cost_sum": 0.0, "by_target": {}}
 
     def reset(self, seed=None):
@@ -385,7 +421,8 @@ class VECMultiEnv:
                 "avg_cost": (s["cost_sum"] / s["energy_n"])
                             if s["energy_n"] else 0.0,
                 "deadline_miss": s["deadline_miss"], "infeasible": s["infeasible"],
-                "fallback": s["fallback"], "by_target": dict(s["by_target"])}
+                "link_break": s["link_break"], "fallback": s["fallback"],
+                "by_target": dict(s["by_target"])}
 
     def close(self):
         if self.world is not None:

@@ -10,7 +10,8 @@ CTDE + 團隊獎勵 的多智能體 PPO。
 
 資料流(配合 vec_env_ma 的批次介面)：
   每個 tick 收集：k 個 agent 的 (obs, action, logprob) + 全域 state + 團隊獎勵。
-  團隊獎勵 = 該 tick 所有 agent 個別獎勵的總和。
+  團隊獎勵 = 該 tick 所有 agent 個別獎勵的「平均」(agent 數可變時尺度較穩，
+  與 train_mappo.collect 的實作一致)。
   GAE 在「tick 序列」上算 → 同一 tick 的所有 agent 共享該 tick 的 advantage。
 
 純演算法，可單獨測試(直接執行會用假資料測前向+更新)。

@@ -28,15 +28,17 @@ from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
 from nodes import build_nodes, estimate, INF
 from task_model import TaskGenerator
 from infra_config import (VEHICLE_CPU, V2V_LINK, V2V_RANGE_M,
-                          RSU_RANGE_M, load_rsus)
+                          RSU_RANGE_M, V2V_EXTRA_LATENCY, TX_POWER_W, load_rsus)
 from run_baseline import is_server   # 重用角色分配
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ---- 觀測特徵正規化常數（把數值縮到大約 [0,1]，DQN 比較好學）----
-DATA_NORM, CPU_NORM, DEAD_NORM = 10e6, 2e9, 3.0
+# ★CPU_NORM 取任務運算量上限(vision 6e9)：先前 2e9 會讓所有重任務削頂成 1.0，
+#   agent 分不出 3G 和 6G cycle 的任務 → 失去「該上雲還是上邊緣」的關鍵資訊。
+DATA_NORM, CPU_NORM, DEAD_NORM = 10e6, 6e9, 3.0
 WAIT_NORM, CONTACT_NORM = 2.0, 60.0
-N_FEATURES = 11
+N_FEATURES = 12   # +1：回程(backhaul)佇列等待 —— agent 須看得到雲端壅塞才公平
 
 # ---- 動作 ----
 ACTIONS = ["local", "v2v", "rsu", "cloud"]
@@ -175,7 +177,7 @@ class VECEnv(gym.Env):
         self._ep = 0
 
     # ---------- 內部：建立一個待決策任務的「情境」 ----------
-    def _build_context(self, task, holder_id, holder_pos, now, hop):
+    def _build_context(self, task, holder_id, holder_pos, now, hop, hop_energy=0.0):
         near = rsus_in_range(holder_pos, self.rsus, RSU_RANGE_M)
         rsu_id = near[0] if near else None
         rsu_pos = (self.rsus[rsu_id]["x"], self.rsus[rsu_id]["y"]) if rsu_id else None
@@ -185,8 +187,16 @@ class VECEnv(gym.Env):
         nb_id = nbrs[0] if nbrs else None
         nb_pos = self.veh_states[nb_id]["pos"] if nb_id else None
         return {"task": task, "holder_id": holder_id, "holder_pos": holder_pos,
-                "now": now, "hop": hop, "rsu_id": rsu_id, "rsu_pos": rsu_pos,
+                "now": now, "hop": hop, "hop_energy": hop_energy,
+                "rsu_id": rsu_id, "rsu_pos": rsu_pos,
                 "nb_id": nb_id, "nb_pos": nb_pos, "n_nbrs": len(nbrs)}
+
+    def _vel_of(self, vid):
+        """車輛的速度向量；不在場(或為靜止基站)回傳 (0,0)。"""
+        if vid in self.veh_states:
+            s = self.veh_states[vid]
+            return velocity_from_speed_angle(s["speed"], s["angle"])
+        return (0.0, 0.0)
 
     def _make_obs(self, ctx):
         task = ctx["task"]
@@ -227,6 +237,7 @@ class VECEnv(gym.Env):
             _clip01(min(ctx["n_nbrs"], 5) / 5.0),
             _clip01(nb_dist / V2V_RANGE_M),
             _clip01(nb_contact / CONTACT_NORM),
+            _clip01(self.nodes.wait_time("backhaul", now) / WAIT_NORM),  # 回程壅塞
         ], dtype=np.float32)
         return obs
 
@@ -248,19 +259,23 @@ class VECEnv(gym.Env):
         self.stats["generated"] += len(new_tasks)
         for task in new_tasks:
             cpos = veh_states[task.source]["pos"]
-            hop = 0.0
+            hop = hop_energy = 0.0
             holder_id, holder_pos = task.source, cpos
             others = {sid: p for sid, p in self.servers.items() if sid != task.source}
             nbrs = neighbors_in_range(cpos, others, V2V_RANGE_M)
             if nbrs:
                 sid = nbrs[0]
                 holder_id, holder_pos = sid, self.servers[sid]
-                hop = transmission_delay(task.data_bits, distance(cpos, holder_pos),
-                                         V2V_LINK)
-                if hop == INF:
+                hop_tx = transmission_delay(task.data_bits, distance(cpos, holder_pos),
+                                            V2V_LINK)
+                if hop_tx == INF:
                     continue
+                # 指派跳(client→server)：補上 PC5 存取開銷與傳輸能耗(先前漏算)
+                hop = V2V_EXTRA_LATENCY + hop_tx
+                hop_energy = TX_POWER_W * hop_tx
             self.pending.append(
-                self._build_context(task, holder_id, holder_pos, now + hop, hop))
+                self._build_context(task, holder_id, holder_pos, now + hop, hop,
+                                    hop_energy))
         self.sim_steps += 1
 
     def _advance_to_next_decision(self):
@@ -301,18 +316,34 @@ class VECEnv(gym.Env):
             info["result"] = "infeasible"
             return -PENALTY_FAIL, info
 
+        # ---- 移動性約束：算「持有者與目標」的連線可維持時間，交給 estimate 檢查 ----
+        #   v2v：兩台車的相對運動；rsu/cloud：車對(靜止)服務基站；local：不需檢查。
+        contact_s = None
+        if kind == "v2v":
+            contact_s = contact_time(pos, self._vel_of(ctx["holder_id"]),
+                                     tpos, self._vel_of(tid), V2V_RANGE_M)
+        elif kind in ("rsu", "cloud"):
+            contact_s = contact_time(pos, self._vel_of(ctx["holder_id"]),
+                                     tpos, (0.0, 0.0), RSU_RANGE_M)
+
         r = estimate(task, kind, now, pos, self.nodes,
-                     target_id=tid, target_pos=tpos, commit=True)
+                     target_id=tid, target_pos=tpos, commit=True,
+                     contact_s=contact_s)
         if not r["feasible"]:
             self.stats["fail"] += 1
-            self.stats["infeasible"] += 1
-            info["result"] = "infeasible"
+            if r.get("link_break"):
+                self.stats["link_break"] += 1     # 完成前駛離範圍 → 連線中斷
+                info["result"] = "link_break"
+            else:
+                self.stats["infeasible"] += 1
+                info["result"] = "infeasible"
             return -PENALTY_FAIL, info
 
         total = ctx["hop"] + r["latency"]
+        energy = r["energy"] + ctx["hop_energy"]   # 含指派跳(client→server)的傳輸能耗
         self.stats["latency_sum"] += total
         self.stats["latency_n"] += 1
-        self.stats["energy_sum"] += r["energy"]
+        self.stats["energy_sum"] += energy
         self.stats["energy_n"] += 1
         self.stats["cost_sum"] += r["cost"]
         self.stats["by_target"][kind] = self.stats["by_target"].get(kind, 0) + 1
@@ -320,7 +351,7 @@ class VECEnv(gym.Env):
         # 獎勵 = -(延遲 + 能耗權重×正規化能耗 + 成本權重×使用成本)。
         #   能耗正規化讓不同層的能耗差異被公平比較、尺度與延遲相近 → 訓練更穩；
         #   成本項(方法②)讓「過度用雲」多付一份代價。
-        reward = -(total + ENERGY_W * r["energy"] / ENERGY_NORM + COST_W * r["cost"])
+        reward = -(total + ENERGY_W * energy / ENERGY_NORM + COST_W * r["cost"])
         if total <= task.deadline_s:
             self.stats["success"] += 1
             info["result"] = "success"
@@ -334,7 +365,7 @@ class VECEnv(gym.Env):
     # ---------- Gym 介面 ----------
     def _reset_stats(self):
         self.stats = {"generated": 0, "success": 0, "fail": 0,
-                      "deadline_miss": 0, "infeasible": 0,
+                      "deadline_miss": 0, "infeasible": 0, "link_break": 0,
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
                       "cost_sum": 0.0, "by_target": {}}
@@ -398,6 +429,7 @@ class VECEnv(gym.Env):
                         if s["energy_n"] else 0.0,
             "deadline_miss": s["deadline_miss"],
             "infeasible": s["infeasible"],
+            "link_break": s["link_break"],
             "by_target": dict(s["by_target"]),
         }
 
