@@ -610,20 +610,20 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
 
-// 紅白 / 大正三色 / 昭和三色 / 写鯉 / 丹頂 / 黄金
+// 紅白 / 大正三色 / 昭和三色 / 写鯉 / 丹頂 / 黄金 — ink-wash palette
 const KOI_TYPES = [
-  { base: '#f7f3e8', fin: 'rgba(243,236,220,0.72)', ray: 'rgba(168,128,84,0.42)',
-    scale: 'rgba(118,92,66,0.17)', patches: [['#cf4b22', 2, 4]] },
-  { base: '#f7f3e8', fin: 'rgba(243,236,220,0.72)', ray: 'rgba(150,118,86,0.42)',
-    scale: 'rgba(118,92,66,0.17)', patches: [['#cf4b22', 2, 3], ['#262330', 1, 2]] },
-  { base: '#2c2832', fin: 'rgba(74,68,78,0.78)', ray: 'rgba(235,228,212,0.32)',
-    scale: 'rgba(235,228,212,0.15)', patches: [['#cf4b22', 1, 2], ['#f2eee2', 2, 3]] },
-  { base: '#27242c', fin: 'rgba(64,59,68,0.78)', ray: 'rgba(235,228,212,0.32)',
-    scale: 'rgba(235,228,212,0.15)', patches: [['#efeadd', 2, 3]] },
-  { base: '#f8f4ea', fin: 'rgba(243,236,220,0.72)', ray: 'rgba(168,128,84,0.42)',
-    scale: 'rgba(118,92,66,0.17)', patches: 'tancho' },
-  { base: '#e2ad33', fin: 'rgba(232,190,90,0.80)', ray: 'rgba(173,116,28,0.48)',
-    scale: 'rgba(166,108,22,0.26)', patches: [['#f0c75c', 1, 2]] }
+  { wash: 'rgba(247,242,230,0.82)', back: 'rgba(116,105,90,0.38)', fin: 'rgba(98,88,78,0.34)',
+    scale: 'rgba(110,95,75,0.12)', patches: [['red', 2, 3]] },
+  { wash: 'rgba(247,242,230,0.82)', back: 'rgba(116,105,90,0.38)', fin: 'rgba(98,88,78,0.34)',
+    scale: 'rgba(110,95,75,0.12)', patches: [['red', 1, 3], ['sumi', 1, 2]] },
+  { wash: 'rgba(58,53,60,0.60)', back: 'rgba(30,27,33,0.55)', fin: 'rgba(58,53,60,0.36)',
+    scale: 'rgba(235,228,212,0.10)', patches: [['red', 1, 2], ['white', 1, 3]] },
+  { wash: 'rgba(50,46,53,0.62)', back: 'rgba(27,24,30,0.55)', fin: 'rgba(52,48,55,0.36)',
+    scale: 'rgba(235,228,212,0.10)', patches: [['white', 2, 3]] },
+  { wash: 'rgba(249,244,233,0.82)', back: 'rgba(118,107,93,0.34)', fin: 'rgba(98,88,78,0.34)',
+    scale: 'rgba(110,95,75,0.12)', patches: 'tancho' },
+  { wash: 'rgba(203,156,66,0.55)', back: 'rgba(148,102,34,0.42)', fin: 'rgba(168,126,56,0.32)',
+    scale: 'rgba(150,100,30,0.14)', patches: [['gold', 1, 2]] }
 ];
 
 const KOI_WIDTH_PROFILE = [0.40, 0.72, 0.90, 0.99, 1.0, 0.97, 0.91, 0.82, 0.71, 0.58, 0.45, 0.33, 0.22, 0.14, 0.085];
@@ -633,12 +633,11 @@ const fishes = [];
 let nextKoiSpawn = 2.5;
 let koiLayerDirty = false;
 
-const PATCH_EDGE = {
-  '#cf4b22': 'rgba(148,44,14,0.45)',
-  '#262330': 'rgba(10,8,14,0.45)',
-  '#f2eee2': 'rgba(165,148,120,0.40)',
-  '#efeadd': 'rgba(165,148,120,0.40)',
-  '#f0c75c': 'rgba(186,134,36,0.45)'
+const PATCH_INK = {
+  red: 'rgba(170,60,34,0.75)',
+  sumi: 'rgba(40,37,44,0.78)',
+  white: 'rgba(238,231,214,0.85)',
+  gold: 'rgba(226,182,96,0.65)'
 };
 
 function makeLobes(rand) {
@@ -650,23 +649,22 @@ function makeLobes(rand) {
 function makePatches(type, rand) {
   if (type.patches === 'tancho') {
     return [{
-      t: 0.085, off: 0, rx: 0.075, ry: 0.066, rot: 0,
-      color: '#cf4b22', edge: PATCH_EDGE['#cf4b22'],
+      t: 0.085, off: 0, rx: 0.080, ry: 0.070, rot: 0,
+      color: PATCH_INK.red,
       lobes: makeLobes(rand).map(v => 0.86 + (v - 0.72) * 0.18)
     }];
   }
   const list = [];
-  for (const [color, min, max] of type.patches) {
+  for (const [ink, min, max] of type.patches) {
     const n = min + Math.floor(rand() * (max - min + 1));
     for (let i = 0; i < n; i++) {
       list.push({
-        t: 0.06 + rand() * 0.72,
+        t: 0.07 + rand() * 0.70,
         off: (rand() * 2 - 1) * 0.5,
-        rx: 0.11 + rand() * 0.11,
-        ry: (0.11 + rand() * 0.11) * (0.55 + rand() * 0.35),
+        rx: 0.12 + rand() * 0.12,
+        ry: (0.12 + rand() * 0.12) * (0.55 + rand() * 0.35),
         rot: (rand() - 0.5) * 0.6,
-        color,
-        edge: PATCH_EDGE[color] || 'rgba(0,0,0,0.3)',
+        color: PATCH_INK[ink],
         lobes: makeLobes(rand)
       });
     }
@@ -807,57 +805,47 @@ function blobPath(path, cx, cy, rx, ry, rot, lobes) {
   smoothClosed(path, pts);
 }
 
-function strokePolyline(ctx, pts) {
-  ctx.beginPath();
-  ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-  ctx.stroke();
-}
-
-// fan-shaped fin with visible fin rays; forked=true makes a koi tail
-function drawFanFin(ctx, bx, by, ang, L, spread, baseW, forked, type) {
-  const a0 = ang - spread / 2, a1 = ang + spread / 2;
-  const px = Math.cos(ang + Math.PI / 2), py = Math.sin(ang + Math.PI / 2);
-  const tip0x = bx + Math.cos(a0) * L, tip0y = by + Math.sin(a0) * L;
-  const tip1x = bx + Math.cos(a1) * L, tip1y = by + Math.sin(a1) * L;
-  const rimR = forked ? L * 0.48 : L * 1.06;
-  const rimx = bx + Math.cos(ang) * rimR, rimy = by + Math.sin(ang) * rimR;
-
-  const path = new Path2D();
-  path.moveTo(bx - px * baseW, by - py * baseW);
-  path.quadraticCurveTo(
-    bx + Math.cos(a0) * L * 0.5 - px * baseW, by + Math.sin(a0) * L * 0.5 - py * baseW,
-    tip0x, tip0y);
-  path.quadraticCurveTo(rimx, rimy, tip1x, tip1y);
-  path.quadraticCurveTo(
-    bx + Math.cos(a1) * L * 0.5 + px * baseW, by + Math.sin(a1) * L * 0.5 + py * baseW,
-    bx + px * baseW, by + py * baseW);
-  path.closePath();
-  ctx.fillStyle = type.fin;
+// Fill a path so only its blurred shadow lands on screen — a soft ink wash
+// with bleeding edges, like wet sumi on washi. Shadow offsets ignore the
+// CTM, so translating the geometry off-canvas and offsetting the shadow
+// back leaves nothing but the blur.
+const INK_OFFSCREEN = 20000;
+function softFill(ctx, path, color, blur) {
+  ctx.save();
+  ctx.translate(INK_OFFSCREEN, 0);
+  ctx.shadowColor = color;
+  ctx.shadowBlur = blur;
+  ctx.shadowOffsetX = -INK_OFFSCREEN;
+  ctx.fillStyle = '#000';
   ctx.fill(path);
-
-  ctx.strokeStyle = type.ray;
-  ctx.lineWidth = Math.max(0.7, L * 0.028);
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  const nRays = 5;
-  for (let k = 0; k <= nRays; k++) {
-    const t = k / nRays;
-    const a = a0 + spread * t;
-    const rl = forked ? L * (1 - 0.5 * Math.sin(t * Math.PI)) : L * (0.97 - 0.05 * Math.sin(t * Math.PI));
-    ctx.moveTo(bx + Math.cos(a) * L * 0.12, by + Math.sin(a) * L * 0.12);
-    ctx.quadraticCurveTo(
-      bx + Math.cos(a) * rl * 0.55, by + Math.sin(a) * rl * 0.55,
-      bx + Math.cos(a) * rl * 0.93, by + Math.sin(a) * rl * 0.93);
-  }
-  ctx.stroke();
-  ctx.lineWidth = 0.8;
-  ctx.stroke(path);
+  ctx.restore();
 }
+
+// single tapering brush stroke (teardrop) from (bx,by) toward ang
+function addBrushStroke(path, bx, by, ang, L, w0, curve) {
+  const px = Math.cos(ang + Math.PI / 2), py = Math.sin(ang + Math.PI / 2);
+  const bend = curve * L;
+  const tipx = bx + Math.cos(ang) * L + px * bend;
+  const tipy = by + Math.sin(ang) * L + py * bend;
+  path.moveTo(bx + px * w0, by + py * w0);
+  path.quadraticCurveTo(
+    bx + Math.cos(ang) * L * 0.55 + px * (w0 * 0.8 + bend * 0.5),
+    by + Math.sin(ang) * L * 0.55 + py * (w0 * 0.8 + bend * 0.5),
+    tipx, tipy);
+  path.quadraticCurveTo(
+    bx + Math.cos(ang) * L * 0.55 - px * (w0 * 0.8 - bend * 0.5),
+    by + Math.sin(ang) * L * 0.55 - py * (w0 * 0.8 - bend * 0.5),
+    bx - px * w0, by - py * w0);
+  path.closePath();
+}
+
+// width of the dark sumi stroke pulled along the back, relative to maxW
+const KOI_BACK_PROFILE = [0.52, 0.62, 0.58, 0.50, 0.43, 0.37, 0.31, 0.26, 0.21, 0.17, 0.13, 0.10, 0.08, 0.06, 0.05];
 
 function drawKoi(ctx, f) {
   const maxW = f.len * 0.16;
   const pts = computeSpine(f);
+  const B = Math.max(2, f.len * 0.022); // ink bleed radius
 
   const left = [], right = [];
   for (let i = 0; i < KOI_N; i++) {
@@ -868,121 +856,105 @@ function drawKoi(ctx, f) {
   const body = new Path2D();
   smoothClosed(body, left.concat(right.slice().reverse()));
 
-  // flowing forked tail
-  const tailBase = spineSample(pts, 0.96);
-  const tailSway = Math.sin(f.phase - 4.6) * 0.45;
-  drawFanFin(ctx, tailBase.x, tailBase.y, tailBase.tang + tailSway * 0.5,
-    f.len * 0.44, 0.95 + Math.abs(tailSway) * 0.2, maxW * 0.10, true, f.type);
+  // all fins as one wash of brush sweeps, under the body
+  const fins = new Path2D();
 
-  // pectoral and pelvic fin pairs
-  for (const [tPos, finL, baseAng] of [[0.24, 0.18, 2.25], [0.58, 0.115, 2.45]]) {
+  // tail: forked fan of tapering strokes
+  const tb = spineSample(pts, 0.93);
+  const tailSway = Math.sin(f.phase - 4.6) * 0.5;
+  const tDir = tb.tang + tailSway * 0.5;
+  const NT = 5;
+  for (let k = 0; k < NT; k++) {
+    const t = k / (NT - 1);
+    const ang = tDir + (t - 0.5) * (0.95 + Math.abs(tailSway) * 0.3);
+    const L = f.len * 0.46 * (1 - 0.42 * Math.sin(t * Math.PI));
+    addBrushStroke(fins, tb.x, tb.y, ang, L, f.len * 0.026,
+      tailSway * 0.25 + (t - 0.5) * 0.12);
+  }
+
+  // pectoral and pelvic pairs: fans of two-three sweeps each
+  for (const [tPos, finL, baseAng, n] of [[0.22, 0.24, 2.05, 3], [0.58, 0.14, 2.35, 2]]) {
     const fp = spineSample(pts, tPos);
     for (const s of [-1, 1]) {
-      const flap = Math.sin(f.phase * 0.9 + (s > 0 ? 0 : Math.PI)) * 0.13;
-      drawFanFin(ctx,
-        fp.x + fp.nx * s * fp.w * maxW * 0.92,
-        fp.y + fp.ny * s * fp.w * maxW * 0.92,
-        f.heading + s * (baseAng + flap),
-        f.len * finL, 0.85, f.len * 0.012, false, f.type);
+      const flap = Math.sin(f.phase * 0.9 + (s > 0 ? 0 : Math.PI)) * 0.16;
+      const bx = fp.x + fp.nx * s * fp.w * maxW * 0.8;
+      const by = fp.y + fp.ny * s * fp.w * maxW * 0.8;
+      for (let k = 0; k < n; k++) {
+        const ang = f.heading + s * (baseAng + flap + (k - (n - 1) / 2) * 0.36);
+        addBrushStroke(fins, bx, by, ang, f.len * finL * (1 - k * 0.12),
+          f.len * 0.018, s * 0.10);
+      }
     }
   }
 
-  // body with a soft shadow so it reads as below the surface
-  ctx.save();
-  ctx.shadowColor = 'rgba(70,58,42,0.22)';
-  ctx.shadowBlur = f.len * 0.09;
-  ctx.shadowOffsetX = f.len * 0.035;
-  ctx.shadowOffsetY = f.len * 0.06;
-  ctx.fillStyle = f.type.base;
-  ctx.fill(body);
-  ctx.restore();
+  // dorsal hinted by two short strokes along the rear spine
+  const d1 = spineSample(pts, 0.60), d2 = spineSample(pts, 0.76);
+  addBrushStroke(fins, d1.x, d1.y, d1.tang + 0.06, f.len * 0.15, f.len * 0.013, 0.05);
+  addBrushStroke(fins, d2.x, d2.y, d2.tang - 0.05, f.len * 0.13, f.len * 0.011, -0.05);
 
-  ctx.save();
-  ctx.clip(body);
+  softFill(ctx, fins, f.type.fin, B * 1.5);
 
-  // irregular pigment patches
+  // body: wide faint bleed, then a denser core wash
+  softFill(ctx, body, f.type.wash, B * 2.4);
+  softFill(ctx, body, f.type.wash, B * 0.9);
+
+  // dark stroke pulled along the back, head loaded with more ink
+  const sl = [], sr = [];
+  for (let i = 0; i < KOI_N; i++) {
+    const w = KOI_BACK_PROFILE[i] * maxW;
+    sl.push({ x: pts[i].x + pts[i].nx * w, y: pts[i].y + pts[i].ny * w });
+    sr.push({ x: pts[i].x - pts[i].nx * w, y: pts[i].y - pts[i].ny * w });
+  }
+  const back = new Path2D();
+  smoothClosed(back, sl.concat(sr.slice().reverse()));
+  softFill(ctx, back, f.type.back, B * 1.6);
+
+  // pigment patches: wet blobs that may bleed slightly past the body
   for (const p of f.patches) {
     const sp = spineSample(pts, p.t);
-    const patch = new Path2D();
-    blobPath(patch,
-      sp.x + sp.nx * p.off * sp.w * maxW,
-      sp.y + sp.ny * p.off * sp.w * maxW,
+    const blob = new Path2D();
+    blobPath(blob,
+      sp.x + sp.nx * p.off * sp.w * maxW * 0.6,
+      sp.y + sp.ny * p.off * sp.w * maxW * 0.6,
       p.rx * f.len, p.ry * f.len, sp.tang + p.rot, p.lobes);
-    ctx.fillStyle = p.color;
-    ctx.fill(patch);
-    ctx.strokeStyle = p.edge;
-    ctx.lineWidth = 1;
-    ctx.stroke(patch);
+    softFill(ctx, blob, p.color, B * 1.5);
   }
 
-  // rounded volume: darker flanks, lighter ridge along the back
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = 'rgba(60,45,35,0.10)';
-  ctx.lineWidth = maxW * 0.55;
-  strokePolyline(ctx, left.slice(1, 13));
-  strokePolyline(ctx, right.slice(1, 13));
-  ctx.strokeStyle = 'rgba(255,255,255,0.09)';
-  ctx.lineWidth = maxW * 0.7;
-  strokePolyline(ctx, pts.slice(1, 9));
-  ctx.lineWidth = maxW * 0.32;
-  strokePolyline(ctx, pts.slice(1, 9));
-
-  // scale netting (staggered crescents bulging tailward)
+  // sparse scale hints and gill arc, kept inside the silhouette
+  ctx.save();
+  ctx.clip(body);
   ctx.strokeStyle = f.type.scale;
-  ctx.lineWidth = Math.max(0.6, f.len * 0.006);
+  ctx.lineWidth = Math.max(0.7, f.len * 0.007);
   ctx.beginPath();
-  const sStep = f.len * 0.052;
-  for (let i = 2; i < KOI_N - 1; i++) {
-    const t = i / (KOI_N - 1);
-    if (t < 0.16 || t > 0.92) continue;
+  const sStep = f.len * 0.06;
+  for (let i = 4; i <= 11; i++) {
     const w = KOI_WIDTH_PROFILE[i] * maxW;
     const cols = Math.max(1, Math.round(w * 2 / sStep));
     for (let c = 0; c < cols; c++) {
-      const off = (c + 0.5) / cols * 2 - 1 + (i % 2 ? 1 / cols : 0);
-      const sx = pts[i].x + pts[i].nx * off * w * 0.92;
-      const sy = pts[i].y + pts[i].ny * off * w * 0.92;
-      const r = sStep * 0.62;
+      const off = ((c + 0.5) / cols * 2 - 1) * 0.85 + (i % 2 ? 0.5 / cols : 0);
+      const sx = pts[i].x + pts[i].nx * off * w;
+      const sy = pts[i].y + pts[i].ny * off * w;
+      const r = sStep * 0.6;
       ctx.moveTo(sx + Math.cos(pts[i].tang - 1.05) * r, sy + Math.sin(pts[i].tang - 1.05) * r);
       ctx.arc(sx, sy, r, pts[i].tang - 1.05, pts[i].tang + 1.05);
     }
   }
   ctx.stroke();
 
-  // gill cover
   const g1 = spineSample(pts, 0.13), g2 = spineSample(pts, 0.21);
-  ctx.strokeStyle = 'rgba(70,50,40,0.20)';
+  ctx.strokeStyle = 'rgba(60,50,42,0.16)';
   ctx.lineWidth = Math.max(0.8, f.len * 0.008);
   ctx.beginPath();
-  ctx.moveTo(g1.x + g1.nx * g1.w * maxW * 0.95, g1.y + g1.ny * g1.w * maxW * 0.95);
-  ctx.quadraticCurveTo(g2.x, g2.y, g1.x - g1.nx * g1.w * maxW * 0.95, g1.y - g1.ny * g1.w * maxW * 0.95);
+  ctx.moveTo(g1.x + g1.nx * g1.w * maxW * 0.9, g1.y + g1.ny * g1.w * maxW * 0.9);
+  ctx.quadraticCurveTo(g2.x, g2.y, g1.x - g1.nx * g1.w * maxW * 0.9, g1.y - g1.ny * g1.w * maxW * 0.9);
   ctx.stroke();
-
   ctx.restore();
 
-  ctx.strokeStyle = 'rgba(52,44,36,0.28)';
-  ctx.lineWidth = 1;
-  ctx.stroke(body);
-
-  // folded dorsal fin seen from above
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = f.type.fin;
-  ctx.lineWidth = maxW * 0.34;
-  strokePolyline(ctx, pts.slice(6, 14));
-  ctx.strokeStyle = f.type.ray;
-  ctx.lineWidth = Math.max(0.7, f.len * 0.006);
-  strokePolyline(ctx, pts.slice(6, 14));
-
-  // mouth and barbels
+  // barbels: two faint whisker strokes
   const tip = pts[0];
-  ctx.strokeStyle = 'rgba(95,72,55,0.45)';
+  ctx.strokeStyle = 'rgba(95,78,62,0.40)';
   ctx.lineWidth = Math.max(0.8, f.len * 0.007);
-  ctx.beginPath();
-  ctx.moveTo(tip.x + tip.nx * maxW * 0.16, tip.y + tip.ny * maxW * 0.16);
-  ctx.quadraticCurveTo(
-    tip.x + Math.cos(f.heading) * maxW * 0.12, tip.y + Math.sin(f.heading) * maxW * 0.12,
-    tip.x - tip.nx * maxW * 0.16, tip.y - tip.ny * maxW * 0.16);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(120,95,70,0.55)';
+  ctx.lineCap = 'round';
   for (const s of [-1, 1]) {
     const bx0 = tip.x + tip.nx * s * maxW * 0.24, by0 = tip.y + tip.ny * s * maxW * 0.24;
     ctx.beginPath();
@@ -993,20 +965,17 @@ function drawKoi(ctx, f) {
     ctx.stroke();
   }
 
-  // eyes with a glint
-  const eye = spineSample(pts, 0.075);
+  // eyes: two soft sumi dots
+  const eyes = new Path2D();
+  const eye = spineSample(pts, 0.08);
+  const er = Math.max(1.4, f.len * 0.016);
   for (const s of [-1, 1]) {
-    const ex = eye.x + eye.nx * s * eye.w * maxW * 0.82;
-    const ey = eye.y + eye.ny * s * eye.w * maxW * 0.82;
-    ctx.fillStyle = 'rgba(28,24,26,0.92)';
-    ctx.beginPath();
-    ctx.arc(ex, ey, Math.max(1.4, f.len * 0.017), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.beginPath();
-    ctx.arc(ex - f.len * 0.005, ey - f.len * 0.005, Math.max(0.5, f.len * 0.006), 0, Math.PI * 2);
-    ctx.fill();
+    const ex = eye.x + eye.nx * s * eye.w * maxW * 0.78;
+    const ey = eye.y + eye.ny * s * eye.w * maxW * 0.78;
+    eyes.moveTo(ex + er, ey);
+    eyes.arc(ex, ey, er, 0, Math.PI * 2);
   }
+  softFill(ctx, eyes, 'rgba(38,33,35,0.78)', B * 0.5);
 }
 
 function renderKoiLayer() {
