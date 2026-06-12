@@ -626,7 +626,7 @@ const KOI_TYPES = [
     outline: 'rgba(120,90,45,0.45)', scale: 'rgba(150,100,30,0.14)', patches: [['gold', 1, 2]] }
 ];
 
-const KOI_WIDTH_PROFILE = [0.40, 0.72, 0.90, 0.99, 1.0, 0.97, 0.91, 0.82, 0.71, 0.58, 0.45, 0.33, 0.22, 0.14, 0.085];
+const KOI_WIDTH_PROFILE = [0.42, 0.70, 0.88, 0.98, 1.0, 0.97, 0.92, 0.85, 0.76, 0.66, 0.55, 0.44, 0.33, 0.24, 0.17];
 const KOI_N = KOI_WIDTH_PROFILE.length;
 
 const fishes = [];
@@ -661,8 +661,8 @@ function makePatches(type, rand) {
       list.push({
         t: 0.07 + rand() * 0.70,
         off: (rand() * 2 - 1) * 0.5,
-        rx: 0.12 + rand() * 0.12,
-        ry: (0.12 + rand() * 0.12) * (0.55 + rand() * 0.35),
+        rx: 0.10 + rand() * 0.09,
+        ry: (0.10 + rand() * 0.09) * (0.55 + rand() * 0.35),
         rot: (rand() - 0.5) * 0.6,
         color: PATCH_INK[ink],
         lobes: makeLobes(rand)
@@ -774,7 +774,7 @@ function computeSpine(f) {
   for (let i = 0; i < KOI_N; i++) {
     const t = i / (KOI_N - 1);
     const along = (0.5 - t) * f.len;
-    const sway = Math.sin(f.phase - t * 4.2) * f.len * (0.016 + 0.07 * t);
+    const sway = Math.sin(f.phase - t * 4.2) * f.len * (0.012 + 0.055 * t);
     pts.push({ x: f.x + ch * along - sh * sway, y: f.y + sh * along + ch * sway });
   }
   for (let i = 0; i < KOI_N; i++) {
@@ -866,7 +866,7 @@ function addBrushStroke(path, bx, by, ang, L, w0, curve) {
 const KOI_BACK_PROFILE = [0.52, 0.62, 0.58, 0.50, 0.43, 0.37, 0.31, 0.26, 0.21, 0.17, 0.13, 0.10, 0.08, 0.06, 0.05];
 
 function drawKoi(ctx, f) {
-  const maxW = f.len * 0.16;
+  const maxW = f.len * 0.15;
   const pts = computeSpine(f);
   const B = Math.max(2, f.len * 0.022); // ink bleed radius
 
@@ -882,18 +882,19 @@ function drawKoi(ctx, f) {
   // all fins as one wash of brush sweeps, under the body
   const fins = new Path2D();
 
-  // tail: forked fan of tapering strokes
-  const tb = spineSample(pts, 0.93);
+  // tail: a few wide ribbon strokes rooted inside the peduncle so the
+  // body flows into the caudal fin, all bending with the sway
+  const tb = spineSample(pts, 0.90);
   const tailSway = Math.sin(f.phase - 4.6) * 0.5;
-  const tDir = tb.tang + tailSway * 0.5;
-  const NT = 5;
+  const tDir = tb.tang + tailSway * 0.35;
+  const NT = 3;
   for (let k = 0; k < NT; k++) {
-    const t = k / (NT - 1);
-    const ang = tDir + (t - 0.5) * (0.95 + Math.abs(tailSway) * 0.3);
-    const jitter = 0.85 + (Math.sin(f.seed * 7 + k * 13) * 0.5 + 0.5) * 0.3;
-    const L = f.len * 0.50 * (1 - 0.42 * Math.sin(t * Math.PI)) * jitter;
-    addBrushStroke(fins, tb.x, tb.y, ang, L, f.len * 0.024,
-      tailSway * 0.25 + (t - 0.5) * 0.12);
+    const t = NT > 1 ? k / (NT - 1) : 0.5;
+    const ang = tDir + (t - 0.5) * 0.42;
+    const jitter = 0.88 + (Math.sin(f.seed * 7 + k * 13) * 0.5 + 0.5) * 0.24;
+    const L = f.len * (0.42 - 0.10 * Math.sin(t * Math.PI)) * jitter;
+    addBrushStroke(fins, tb.x, tb.y, ang, L, f.len * 0.048,
+      tailSway * 0.45 + (t - 0.5) * 0.10);
   }
 
   // dried spatter trailing beyond the tail
@@ -907,25 +908,20 @@ function drawKoi(ctx, f) {
   }
   softFill(ctx, spat, 'rgba(48,43,46,0.50)', B * 0.5);
 
-  // pectoral and pelvic pairs: fans of two-three sweeps each
-  for (const [tPos, finL, baseAng, n] of [[0.22, 0.24, 2.05, 3], [0.58, 0.14, 2.35, 2]]) {
+  // pectoral and pelvic pairs: short wide sweeps hugging the body
+  for (const [tPos, finL, baseAng, n] of [[0.24, 0.19, 1.95, 2], [0.60, 0.11, 2.25, 1]]) {
     const fp = spineSample(pts, tPos);
     for (const s of [-1, 1]) {
-      const flap = Math.sin(f.phase * 0.9 + (s > 0 ? 0 : Math.PI)) * 0.16;
-      const bx = fp.x + fp.nx * s * fp.w * maxW * 0.8;
-      const by = fp.y + fp.ny * s * fp.w * maxW * 0.8;
+      const flap = Math.sin(f.phase * 0.9 + (s > 0 ? 0 : Math.PI)) * 0.14;
+      const bx = fp.x + fp.nx * s * fp.w * maxW * 0.55;
+      const by = fp.y + fp.ny * s * fp.w * maxW * 0.55;
       for (let k = 0; k < n; k++) {
-        const ang = f.heading + s * (baseAng + flap + (k - (n - 1) / 2) * 0.36);
-        addBrushStroke(fins, bx, by, ang, f.len * finL * (1 - k * 0.12),
-          f.len * 0.018, s * 0.10);
+        const ang = f.heading + s * (baseAng + flap + (k - (n - 1) / 2) * 0.30);
+        addBrushStroke(fins, bx, by, ang, f.len * finL * (1 - k * 0.15),
+          f.len * 0.030, s * 0.16);
       }
     }
   }
-
-  // dorsal hinted by two short strokes along the rear spine
-  const d1 = spineSample(pts, 0.60), d2 = spineSample(pts, 0.76);
-  addBrushStroke(fins, d1.x, d1.y, d1.tang + 0.06, f.len * 0.15, f.len * 0.013, 0.05);
-  addBrushStroke(fins, d2.x, d2.y, d2.tang - 0.05, f.len * 0.13, f.len * 0.011, -0.05);
 
   softFill(ctx, fins, f.type.fin, B * 0.9);
 
@@ -945,7 +941,9 @@ function drawKoi(ctx, f) {
   smoothClosed(back, sl.concat(sr.slice().reverse()));
   softFill(ctx, back, f.type.back, B * 1.3);
 
-  // pigment patches: wet blobs that may bleed slightly past the body
+  // pigment patches: wet blobs, soft inside but ending at the silhouette
+  ctx.save();
+  ctx.clip(body);
   for (const p of f.patches) {
     const sp = spineSample(pts, p.t);
     const blob = new Path2D();
@@ -955,6 +953,7 @@ function drawKoi(ctx, f) {
       p.rx * f.len, p.ry * f.len, sp.tang + p.rot, p.lobes);
     softFill(ctx, blob, p.color, B * 1.1);
   }
+  ctx.restore();
 
   // thin ink contour so the silhouette reads against the paper
   softStroke(ctx, body, f.type.outline, B * 0.5, Math.max(1, f.len * 0.012));
