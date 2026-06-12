@@ -612,35 +612,62 @@ gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new
 
 // 紅白 / 大正三色 / 昭和三色 / 写鯉 / 丹頂 / 黄金
 const KOI_TYPES = [
-  { base: '#f6f2e7', fin: 'rgba(226,218,202,0.85)', patches: [['#bf3a2b', 2, 4]] },
-  { base: '#f6f2e7', fin: 'rgba(226,218,202,0.85)', patches: [['#bf3a2b', 2, 3], ['#2c2830', 1, 3]] },
-  { base: '#2c2830', fin: 'rgba(64,58,66,0.85)', patches: [['#bf3a2b', 1, 2], ['#f2eee2', 2, 3]] },
-  { base: '#27242b', fin: 'rgba(58,53,60,0.85)', patches: [['#efeadd', 2, 4]] },
-  { base: '#f8f4ea', fin: 'rgba(230,222,206,0.85)', patches: 'tancho' },
-  { base: '#d4a13c', fin: 'rgba(216,176,90,0.85)', patches: [['#e9c566', 1, 2]] }
+  { base: '#f7f3e8', fin: 'rgba(243,236,220,0.72)', ray: 'rgba(168,128,84,0.42)',
+    scale: 'rgba(118,92,66,0.17)', patches: [['#cf4b22', 2, 4]] },
+  { base: '#f7f3e8', fin: 'rgba(243,236,220,0.72)', ray: 'rgba(150,118,86,0.42)',
+    scale: 'rgba(118,92,66,0.17)', patches: [['#cf4b22', 2, 3], ['#262330', 1, 2]] },
+  { base: '#2c2832', fin: 'rgba(74,68,78,0.78)', ray: 'rgba(235,228,212,0.32)',
+    scale: 'rgba(235,228,212,0.15)', patches: [['#cf4b22', 1, 2], ['#f2eee2', 2, 3]] },
+  { base: '#27242c', fin: 'rgba(64,59,68,0.78)', ray: 'rgba(235,228,212,0.32)',
+    scale: 'rgba(235,228,212,0.15)', patches: [['#efeadd', 2, 3]] },
+  { base: '#f8f4ea', fin: 'rgba(243,236,220,0.72)', ray: 'rgba(168,128,84,0.42)',
+    scale: 'rgba(118,92,66,0.17)', patches: 'tancho' },
+  { base: '#e2ad33', fin: 'rgba(232,190,90,0.80)', ray: 'rgba(173,116,28,0.48)',
+    scale: 'rgba(166,108,22,0.26)', patches: [['#f0c75c', 1, 2]] }
 ];
 
-const KOI_WIDTH_PROFILE = [0.50, 0.78, 0.94, 1.0, 0.98, 0.90, 0.78, 0.63, 0.47, 0.32, 0.20, 0.11, 0.05];
+const KOI_WIDTH_PROFILE = [0.40, 0.72, 0.90, 0.99, 1.0, 0.97, 0.91, 0.82, 0.71, 0.58, 0.45, 0.33, 0.22, 0.14, 0.085];
 const KOI_N = KOI_WIDTH_PROFILE.length;
 
 const fishes = [];
 let nextKoiSpawn = 2.5;
 let koiLayerDirty = false;
 
+const PATCH_EDGE = {
+  '#cf4b22': 'rgba(148,44,14,0.45)',
+  '#262330': 'rgba(10,8,14,0.45)',
+  '#f2eee2': 'rgba(165,148,120,0.40)',
+  '#efeadd': 'rgba(165,148,120,0.40)',
+  '#f0c75c': 'rgba(186,134,36,0.45)'
+};
+
+function makeLobes(rand) {
+  const a = [];
+  for (let i = 0; i < 9; i++) a.push(0.72 + rand() * 0.55);
+  return a;
+}
+
 function makePatches(type, rand) {
   if (type.patches === 'tancho') {
-    return [{ t: 0.09, off: 0, rx: 0.075, ry: 0.065, color: '#bf3a2b' }];
+    return [{
+      t: 0.085, off: 0, rx: 0.075, ry: 0.066, rot: 0,
+      color: '#cf4b22', edge: PATCH_EDGE['#cf4b22'],
+      lobes: makeLobes(rand).map(v => 0.86 + (v - 0.72) * 0.18)
+    }];
   }
   const list = [];
   for (const [color, min, max] of type.patches) {
     const n = min + Math.floor(rand() * (max - min + 1));
     for (let i = 0; i < n; i++) {
       list.push({
-        t: 0.07 + rand() * 0.70,
-        off: (rand() * 2 - 1) * 0.55,
-        rx: 0.09 + rand() * 0.10,
-        ry: (0.09 + rand() * 0.10) * (0.55 + rand() * 0.35),
-        color
+        t: 0.06 + rand() * 0.72,
+        off: (rand() * 2 - 1) * 0.5,
+        rx: 0.11 + rand() * 0.11,
+        ry: (0.11 + rand() * 0.11) * (0.55 + rand() * 0.35),
+        rot: (rand() - 0.5) * 0.6,
+        color,
+        edge: PATCH_EDGE[color] || 'rgba(0,0,0,0.3)',
+        lobes: makeLobes(rand)
       });
     }
   }
@@ -649,7 +676,7 @@ function makePatches(type, rand) {
 
 function spawnKoi() {
   const w = koiCanvas.width, h = koiCanvas.height;
-  const len = Math.min(w, h) * (0.14 + Math.random() * 0.07);
+  const len = Math.min(w, h) * (0.17 + Math.random() * 0.08);
   const side = Math.floor(Math.random() * 4);
   const m = len * 1.6;
   let x, y, heading;
@@ -661,7 +688,7 @@ function spawnKoi() {
   const type = KOI_TYPES[Math.floor(Math.random() * KOI_TYPES.length)];
   fishes.push({
     x, y, heading, len, type,
-    speed: len * (0.45 + Math.random() * 0.30),
+    speed: len * (0.38 + Math.random() * 0.24),
     phase: Math.random() * Math.PI * 2,
     seed: Math.random() * 100,
     fear: 0,
@@ -767,8 +794,69 @@ function spineSample(pts, t) {
   };
 }
 
+function blobPath(path, cx, cy, rx, ry, rot, lobes) {
+  const n = lobes.length;
+  const cr = Math.cos(rot), sr = Math.sin(rot);
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = i / n * Math.PI * 2;
+    const x = Math.cos(a) * rx * lobes[i];
+    const y = Math.sin(a) * ry * lobes[i];
+    pts.push({ x: cx + x * cr - y * sr, y: cy + x * sr + y * cr });
+  }
+  smoothClosed(path, pts);
+}
+
+function strokePolyline(ctx, pts) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+}
+
+// fan-shaped fin with visible fin rays; forked=true makes a koi tail
+function drawFanFin(ctx, bx, by, ang, L, spread, baseW, forked, type) {
+  const a0 = ang - spread / 2, a1 = ang + spread / 2;
+  const px = Math.cos(ang + Math.PI / 2), py = Math.sin(ang + Math.PI / 2);
+  const tip0x = bx + Math.cos(a0) * L, tip0y = by + Math.sin(a0) * L;
+  const tip1x = bx + Math.cos(a1) * L, tip1y = by + Math.sin(a1) * L;
+  const rimR = forked ? L * 0.48 : L * 1.06;
+  const rimx = bx + Math.cos(ang) * rimR, rimy = by + Math.sin(ang) * rimR;
+
+  const path = new Path2D();
+  path.moveTo(bx - px * baseW, by - py * baseW);
+  path.quadraticCurveTo(
+    bx + Math.cos(a0) * L * 0.5 - px * baseW, by + Math.sin(a0) * L * 0.5 - py * baseW,
+    tip0x, tip0y);
+  path.quadraticCurveTo(rimx, rimy, tip1x, tip1y);
+  path.quadraticCurveTo(
+    bx + Math.cos(a1) * L * 0.5 + px * baseW, by + Math.sin(a1) * L * 0.5 + py * baseW,
+    bx + px * baseW, by + py * baseW);
+  path.closePath();
+  ctx.fillStyle = type.fin;
+  ctx.fill(path);
+
+  ctx.strokeStyle = type.ray;
+  ctx.lineWidth = Math.max(0.7, L * 0.028);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  const nRays = 5;
+  for (let k = 0; k <= nRays; k++) {
+    const t = k / nRays;
+    const a = a0 + spread * t;
+    const rl = forked ? L * (1 - 0.5 * Math.sin(t * Math.PI)) : L * (0.97 - 0.05 * Math.sin(t * Math.PI));
+    ctx.moveTo(bx + Math.cos(a) * L * 0.12, by + Math.sin(a) * L * 0.12);
+    ctx.quadraticCurveTo(
+      bx + Math.cos(a) * rl * 0.55, by + Math.sin(a) * rl * 0.55,
+      bx + Math.cos(a) * rl * 0.93, by + Math.sin(a) * rl * 0.93);
+  }
+  ctx.stroke();
+  ctx.lineWidth = 0.8;
+  ctx.stroke(path);
+}
+
 function drawKoi(ctx, f) {
-  const maxW = f.len * 0.135;
+  const maxW = f.len * 0.16;
   const pts = computeSpine(f);
 
   const left = [], right = [];
@@ -777,45 +865,26 @@ function drawKoi(ctx, f) {
     left.push({ x: pts[i].x + pts[i].nx * w, y: pts[i].y + pts[i].ny * w });
     right.push({ x: pts[i].x - pts[i].nx * w, y: pts[i].y - pts[i].ny * w });
   }
-  right.reverse();
   const body = new Path2D();
-  smoothClosed(body, left.concat(right));
+  smoothClosed(body, left.concat(right.slice().reverse()));
 
-  // tail fin
-  const tailBase = pts[KOI_N - 1];
-  const prev = pts[KOI_N - 2];
-  const tailDir = Math.atan2(tailBase.y - prev.y, tailBase.x - prev.x);
-  const tailSway = Math.sin(f.phase - 5.0) * 0.45;
-  const tipLen = f.len * 0.30;
-  const tA = tailDir + 0.5 + tailSway * 0.4;
-  const tB = tailDir - 0.5 + tailSway * 0.4;
-  const tMid = tailDir + tailSway * 0.4;
-  ctx.beginPath();
-  ctx.moveTo(tailBase.x, tailBase.y);
-  ctx.quadraticCurveTo(
-    tailBase.x + Math.cos(tMid) * tipLen * 0.5, tailBase.y + Math.sin(tMid) * tipLen * 0.5,
-    tailBase.x + Math.cos(tA) * tipLen, tailBase.y + Math.sin(tA) * tipLen);
-  ctx.quadraticCurveTo(
-    tailBase.x + Math.cos(tMid) * tipLen * 0.45, tailBase.y + Math.sin(tMid) * tipLen * 0.45,
-    tailBase.x + Math.cos(tB) * tipLen, tailBase.y + Math.sin(tB) * tipLen);
-  ctx.closePath();
-  ctx.fillStyle = f.type.fin;
-  ctx.fill();
+  // flowing forked tail
+  const tailBase = spineSample(pts, 0.96);
+  const tailSway = Math.sin(f.phase - 4.6) * 0.45;
+  drawFanFin(ctx, tailBase.x, tailBase.y, tailBase.tang + tailSway * 0.5,
+    f.len * 0.44, 0.95 + Math.abs(tailSway) * 0.2, maxW * 0.10, true, f.type);
 
-  // pectoral fins
-  const fp = pts[3];
-  for (const s of [-1, 1]) {
-    const ang = f.heading + s * (2.0 + Math.sin(f.phase * 0.9 + (s > 0 ? 0 : Math.PI)) * 0.16);
-    const fx = fp.x + fp.nx * s * maxW * 0.85;
-    const fy = fp.y + fp.ny * s * maxW * 0.85;
-    ctx.save();
-    ctx.translate(fx, fy);
-    ctx.rotate(ang);
-    ctx.beginPath();
-    ctx.ellipse(f.len * 0.07, 0, f.len * 0.085, f.len * 0.038, 0, 0, Math.PI * 2);
-    ctx.fillStyle = f.type.fin;
-    ctx.fill();
-    ctx.restore();
+  // pectoral and pelvic fin pairs
+  for (const [tPos, finL, baseAng] of [[0.24, 0.18, 2.25], [0.58, 0.115, 2.45]]) {
+    const fp = spineSample(pts, tPos);
+    for (const s of [-1, 1]) {
+      const flap = Math.sin(f.phase * 0.9 + (s > 0 ? 0 : Math.PI)) * 0.13;
+      drawFanFin(ctx,
+        fp.x + fp.nx * s * fp.w * maxW * 0.92,
+        fp.y + fp.ny * s * fp.w * maxW * 0.92,
+        f.heading + s * (baseAng + flap),
+        f.len * finL, 0.85, f.len * 0.012, false, f.type);
+    }
   }
 
   // body with a soft shadow so it reads as below the surface
@@ -828,37 +897,114 @@ function drawKoi(ctx, f) {
   ctx.fill(body);
   ctx.restore();
 
-  // patches clipped to the body
   ctx.save();
   ctx.clip(body);
+
+  // irregular pigment patches
   for (const p of f.patches) {
     const sp = spineSample(pts, p.t);
-    const px = sp.x + sp.nx * p.off * sp.w * maxW;
-    const py = sp.y + sp.ny * p.off * sp.w * maxW;
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(sp.tang);
+    const patch = new Path2D();
+    blobPath(patch,
+      sp.x + sp.nx * p.off * sp.w * maxW,
+      sp.y + sp.ny * p.off * sp.w * maxW,
+      p.rx * f.len, p.ry * f.len, sp.tang + p.rot, p.lobes);
     ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, p.rx * f.len, p.ry * f.len, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(p.rx * f.len * 0.5, p.ry * f.len * 0.3, p.rx * f.len * 0.7, p.ry * f.len * 0.7, 0.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    ctx.fill(patch);
+    ctx.strokeStyle = p.edge;
+    ctx.lineWidth = 1;
+    ctx.stroke(patch);
   }
+
+  // rounded volume: darker flanks, lighter ridge along the back
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(60,45,35,0.10)';
+  ctx.lineWidth = maxW * 0.55;
+  strokePolyline(ctx, left.slice(1, 13));
+  strokePolyline(ctx, right.slice(1, 13));
+  ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+  ctx.lineWidth = maxW * 0.7;
+  strokePolyline(ctx, pts.slice(1, 9));
+  ctx.lineWidth = maxW * 0.32;
+  strokePolyline(ctx, pts.slice(1, 9));
+
+  // scale netting (staggered crescents bulging tailward)
+  ctx.strokeStyle = f.type.scale;
+  ctx.lineWidth = Math.max(0.6, f.len * 0.006);
+  ctx.beginPath();
+  const sStep = f.len * 0.052;
+  for (let i = 2; i < KOI_N - 1; i++) {
+    const t = i / (KOI_N - 1);
+    if (t < 0.16 || t > 0.92) continue;
+    const w = KOI_WIDTH_PROFILE[i] * maxW;
+    const cols = Math.max(1, Math.round(w * 2 / sStep));
+    for (let c = 0; c < cols; c++) {
+      const off = (c + 0.5) / cols * 2 - 1 + (i % 2 ? 1 / cols : 0);
+      const sx = pts[i].x + pts[i].nx * off * w * 0.92;
+      const sy = pts[i].y + pts[i].ny * off * w * 0.92;
+      const r = sStep * 0.62;
+      ctx.moveTo(sx + Math.cos(pts[i].tang - 1.05) * r, sy + Math.sin(pts[i].tang - 1.05) * r);
+      ctx.arc(sx, sy, r, pts[i].tang - 1.05, pts[i].tang + 1.05);
+    }
+  }
+  ctx.stroke();
+
+  // gill cover
+  const g1 = spineSample(pts, 0.13), g2 = spineSample(pts, 0.21);
+  ctx.strokeStyle = 'rgba(70,50,40,0.20)';
+  ctx.lineWidth = Math.max(0.8, f.len * 0.008);
+  ctx.beginPath();
+  ctx.moveTo(g1.x + g1.nx * g1.w * maxW * 0.95, g1.y + g1.ny * g1.w * maxW * 0.95);
+  ctx.quadraticCurveTo(g2.x, g2.y, g1.x - g1.nx * g1.w * maxW * 0.95, g1.y - g1.ny * g1.w * maxW * 0.95);
+  ctx.stroke();
+
   ctx.restore();
 
-  ctx.strokeStyle = 'rgba(52,44,36,0.20)';
+  ctx.strokeStyle = 'rgba(52,44,36,0.28)';
   ctx.lineWidth = 1;
   ctx.stroke(body);
 
-  // eyes
-  const eye = spineSample(pts, 0.06);
-  ctx.fillStyle = 'rgba(30,28,30,0.85)';
+  // folded dorsal fin seen from above
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = f.type.fin;
+  ctx.lineWidth = maxW * 0.34;
+  strokePolyline(ctx, pts.slice(6, 14));
+  ctx.strokeStyle = f.type.ray;
+  ctx.lineWidth = Math.max(0.7, f.len * 0.006);
+  strokePolyline(ctx, pts.slice(6, 14));
+
+  // mouth and barbels
+  const tip = pts[0];
+  ctx.strokeStyle = 'rgba(95,72,55,0.45)';
+  ctx.lineWidth = Math.max(0.8, f.len * 0.007);
+  ctx.beginPath();
+  ctx.moveTo(tip.x + tip.nx * maxW * 0.16, tip.y + tip.ny * maxW * 0.16);
+  ctx.quadraticCurveTo(
+    tip.x + Math.cos(f.heading) * maxW * 0.12, tip.y + Math.sin(f.heading) * maxW * 0.12,
+    tip.x - tip.nx * maxW * 0.16, tip.y - tip.ny * maxW * 0.16);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(120,95,70,0.55)';
   for (const s of [-1, 1]) {
+    const bx0 = tip.x + tip.nx * s * maxW * 0.24, by0 = tip.y + tip.ny * s * maxW * 0.24;
     ctx.beginPath();
-    ctx.arc(eye.x + eye.nx * s * maxW * 0.42, eye.y + eye.ny * s * maxW * 0.42, Math.max(1.2, f.len * 0.013), 0, Math.PI * 2);
+    ctx.moveTo(bx0, by0);
+    ctx.quadraticCurveTo(
+      bx0 + Math.cos(f.heading + s * 1.1) * f.len * 0.035, by0 + Math.sin(f.heading + s * 1.1) * f.len * 0.035,
+      bx0 + Math.cos(f.heading + s * 1.5) * f.len * 0.055, by0 + Math.sin(f.heading + s * 1.5) * f.len * 0.055);
+    ctx.stroke();
+  }
+
+  // eyes with a glint
+  const eye = spineSample(pts, 0.075);
+  for (const s of [-1, 1]) {
+    const ex = eye.x + eye.nx * s * eye.w * maxW * 0.82;
+    const ey = eye.y + eye.ny * s * eye.w * maxW * 0.82;
+    ctx.fillStyle = 'rgba(28,24,26,0.92)';
+    ctx.beginPath();
+    ctx.arc(ex, ey, Math.max(1.4, f.len * 0.017), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath();
+    ctx.arc(ex - f.len * 0.005, ey - f.len * 0.005, Math.max(0.5, f.len * 0.006), 0, Math.PI * 2);
     ctx.fill();
   }
 }
