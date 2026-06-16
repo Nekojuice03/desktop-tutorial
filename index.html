@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>　</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bar-bg: rgba(20, 24, 30, 0.34);
+    --bar-border: rgba(255,255,255,0.22);
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{
+    width:100%; height:100%; overflow:hidden;
+    background:#7ec0ee;
+    font-family:'Baloo 2', system-ui, sans-serif;
+    touch-action:none;
+  }
+  #scene{ position:fixed; inset:0; display:block; }
+
+  /* Bottom centered capsule control bar */
+  #dock{
+    position:fixed;
+    left:50%;
+    bottom:max(14px, env(safe-area-inset-bottom));
+    transform:translateX(-50%);
+    display:flex;
+    gap:clamp(10px, 4.2vw, 26px);
+    align-items:center;
+    padding:clamp(8px,2.4vw,12px) clamp(12px,4vw,22px);
+    background:var(--bar-bg);
+    border:1px solid var(--bar-border);
+    border-radius:999px;
+    backdrop-filter: blur(10px) saturate(1.2);
+    -webkit-backdrop-filter: blur(10px) saturate(1.2);
+    box-shadow:0 8px 30px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.25);
+    max-width:calc(100vw - 16px);
+    z-index:10;
+    user-select:none;
+    transition:opacity .3s ease;
+  }
+  #dock.busy{ opacity:.45; pointer-events:none; }
+
+  .ball-btn{
+    position:relative;
+    width:clamp(40px, 12vw, 58px);
+    height:clamp(40px, 12vw, 58px);
+    border-radius:50%;
+    cursor:pointer;
+    border:none;
+    background:transparent;
+    padding:0;
+    transition:transform .12s ease, filter .2s ease;
+    flex:0 0 auto;
+    filter:drop-shadow(0 3px 5px rgba(0,0,0,.35));
+  }
+  .ball-btn:active{ transform:scale(.9); }
+  .ball-btn:hover{ transform:translateY(-3px); }
+
+  /* CSS-drawn pokeball icon */
+  .ball-ico{
+    position:absolute; inset:0; border-radius:50%;
+    background:
+      radial-gradient(circle at 38% 32%, rgba(255,255,255,.7) 0 8%, rgba(255,255,255,0) 30%),
+      linear-gradient(#fff 0 50%, #f3f3f3 50% 100%);
+    box-shadow: inset 0 0 0 2px rgba(0,0,0,.55);
+    overflow:hidden;
+  }
+  /* top color half */
+  .ball-ico::before{
+    content:""; position:absolute; left:0; top:0; right:0; height:50%;
+    background:var(--top, #ee1515);
+  }
+  /* center band */
+  .ball-ico::after{
+    content:""; position:absolute; left:0; right:0; top:calc(50% - 9%); height:18%;
+    background:#1b1b1b;
+  }
+  /* center button */
+  .ball-btn .knob{
+    position:absolute; left:50%; top:50%; width:30%; height:30%;
+    transform:translate(-50%,-50%);
+    border-radius:50%;
+    background:#fff;
+    box-shadow:0 0 0 2px #1b1b1b, 0 0 0 4px #fff, 0 0 0 5px #1b1b1b;
+    z-index:2;
+  }
+
+  /* per-ball colors */
+  .poke  { --top:#ee1515; }
+  .great { --top:#2f6fd1; }
+  .great .accent{ position:absolute; inset:0; }
+  .ultra { --top:#1c1c1c; }
+  .master{ --top:#5b2a99; }
+
+  /* Great ball red accents on the top */
+  .great .ball-ico::before{
+    background:
+      radial-gradient(circle at 26% 78%, #d4202a 0 13%, transparent 14%),
+      radial-gradient(circle at 74% 78%, #d4202a 0 13%, transparent 14%),
+      #2f6fd1;
+  }
+  /* Ultra ball yellow mark */
+  .ultra .ball-ico::before{
+    background:#1c1c1c;
+  }
+  .ultra .ball-ico::before{
+    box-shadow: inset 0 -6px 0 -2px #f2c200;
+  }
+  /* Master ball M + pink dots */
+  .master .ball-ico::before{
+    background:
+      radial-gradient(circle at 30% 60%, #e85aa6 0 12%, transparent 13%),
+      radial-gradient(circle at 70% 60%, #e85aa6 0 12%, transparent 13%),
+      #5b2a99;
+  }
+  .master .mtext{
+    position:absolute; left:0; right:0; top:7%; text-align:center;
+    color:#f2a8d2; font-weight:700; font-size:.62em; letter-spacing:-1px;
+    text-shadow:0 1px 1px rgba(0,0,0,.4); z-index:2; pointer-events:none;
+  }
+
+  #loading{
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background:#7ec0ee; z-index:50; transition:opacity .6s ease;
+  }
+  #loading.hide{ opacity:0; pointer-events:none; }
+  .spin{
+    width:54px;height:54px;border-radius:50%;
+    background:linear-gradient(#ee1515 0 50%,#fff 50% 100%);
+    box-shadow:inset 0 0 0 3px #1b1b1b;
+    position:relative; animation:roll 1s linear infinite;
+  }
+  .spin::after{content:"";position:absolute;left:0;right:0;top:calc(50% - 9%);height:18%;background:#1b1b1b;}
+  .spin::before{content:"";position:absolute;left:50%;top:50%;width:30%;height:30%;transform:translate(-50%,-50%);
+    border-radius:50%;background:#fff;box-shadow:0 0 0 3px #1b1b1b;z-index:2;}
+  @keyframes roll{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="loading"><div class="spin"></div></div>
+
+  <div id="dock" aria-hidden="false">
+    <button class="ball-btn poke"   data-ball="poke"   data-rate="0.40" aria-label="Poke Ball"><span class="ball-ico"></span><span class="knob"></span></button>
+    <button class="ball-btn great"  data-ball="great"  data-rate="0.60" aria-label="Great Ball"><span class="ball-ico"></span><span class="knob"></span></button>
+    <button class="ball-btn ultra"  data-ball="ultra"  data-rate="0.70" aria-label="Ultra Ball"><span class="ball-ico"></span><span class="knob"></span></button>
+    <button class="ball-btn master" data-ball="master" data-rate="1.00" aria-label="Master Ball"><span class="ball-ico"></span><span class="mtext">M</span><span class="knob"></span></button>
+  </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  const THREE_OK = typeof THREE !== 'undefined';
+  if(!THREE_OK){ console.error('Three.js failed to load'); }
+
+  // ----------------------------------------------------------------------
+  //  Renderer / Scene / Camera
+  // ----------------------------------------------------------------------
+  const canvas = document.getElementById('scene');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x000000, 0);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  if(THREE.sRGBEncoding!==undefined) renderer.outputEncoding = THREE.sRGBEncoding;
+
+  const scene = new THREE.Scene();
+
+  // Sky gradient background
+  scene.background = makeSkyTexture();
+
+  const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 200);
+  camera.position.set(0, 5.4, 12.2);
+  camera.lookAt(0, 1.6, -0.5);
+
+  // ----------------------------------------------------------------------
+  //  Lights
+  // ----------------------------------------------------------------------
+  const hemi = new THREE.HemisphereLight(0xddf3ff, 0x4a7a3a, 0.95);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xfff4d6, 1.25);
+  sun.position.set(6, 12, 6);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024,1024);
+  sun.shadow.camera.left=-14; sun.shadow.camera.right=14;
+  sun.shadow.camera.top=14;  sun.shadow.camera.bottom=-14;
+  sun.shadow.camera.near=1;  sun.shadow.camera.far=40;
+  sun.shadow.bias=-0.0004;
+  scene.add(sun);
+
+  // ----------------------------------------------------------------------
+  //  Grass ground (custom shader)
+  // ----------------------------------------------------------------------
+  const FIELD = { minX:-8, maxX:8, minZ:-7, maxZ:5 };
+
+  const grassMat = new THREE.ShaderMaterial({
+    uniforms:{ uTime:{value:0} },
+    vertexShader:`
+      varying vec3 vWorld;
+      void main(){
+        vec4 wp = modelMatrix * vec4(position,1.0);
+        vWorld = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader:`
+      precision highp float;
+      varying vec3 vWorld;
+      float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float noise(vec2 p){
+        vec2 i=floor(p), f=fract(p);
+        f=f*f*(3.0-2.0*f);
+        float a=hash(i), b=hash(i+vec2(1.0,0.0)), c=hash(i+vec2(0.0,1.0)), d=hash(i+vec2(1.0,1.0));
+        return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+      }
+      void main(){
+        vec2 p = vWorld.xz;
+        float n = noise(p*0.7)*0.5 + noise(p*2.6)*0.3 + noise(p*8.0)*0.2;
+        vec3 dark = vec3(0.18,0.42,0.14);
+        vec3 light= vec3(0.42,0.70,0.27);
+        vec3 col = mix(dark, light, n);
+        col *= 0.82 + 0.18*noise(p*1.3+7.0);
+        // faint mowed stripes for a farm look
+        col *= 0.94 + 0.06*sin(vWorld.x*1.4);
+        gl_FragColor = vec4(col,1.0);
+      }`
+  });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(60,60,1,1), grassMat);
+  ground.rotation.x = -Math.PI/2;
+  ground.position.y = 0;
+  ground.receiveShadow = false;
+  scene.add(ground);
+
+  // a subtle receiving plane just for shadows
+  const shadowCatcher = new THREE.Mesh(
+    new THREE.PlaneGeometry(60,60),
+    new THREE.ShadowMaterial({ opacity:0.22 })
+  );
+  shadowCatcher.rotation.x = -Math.PI/2;
+  shadowCatcher.position.y = 0.01;
+  shadowCatcher.receiveShadow = true;
+  scene.add(shadowCatcher);
+
+  // ----------------------------------------------------------------------
+  //  Water pool (custom animated shader)
+  // ----------------------------------------------------------------------
+  const POOL = { x:-4.6, z:-3.4, r:2.7 };
+  const waterMat = new THREE.ShaderMaterial({
+    transparent:true,
+    uniforms:{ uTime:{value:0} },
+    vertexShader:`
+      varying vec2 vUv; varying vec3 vWorld;
+      void main(){
+        vUv = uv;
+        vec4 wp = modelMatrix * vec4(position,1.0);
+        vWorld = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader:`
+      precision highp float;
+      uniform float uTime;
+      varying vec2 vUv; varying vec3 vWorld;
+      void main(){
+        vec2 c = vUv - 0.5;
+        float d = length(c)*2.0;
+        float ripple = sin(vWorld.x*3.2 + uTime*1.8) * 0.5
+                     + sin(vWorld.z*4.1 - uTime*1.4) * 0.5
+                     + sin((vWorld.x+vWorld.z)*5.0 + uTime*2.4)*0.3;
+        ripple = ripple*0.5+0.5;
+        vec3 deep    = vec3(0.06,0.32,0.55);
+        vec3 shallow = vec3(0.20,0.62,0.78);
+        vec3 col = mix(deep, shallow, ripple*0.7 + 0.15);
+        // glint
+        float glint = smoothstep(0.78,0.98, ripple);
+        col += glint*0.35;
+        // soft edge fade to transparent at rim
+        float edge = smoothstep(1.0, 0.82, d);
+        gl_FragColor = vec4(col, edge);
+      }`
+  });
+  const water = new THREE.Mesh(new THREE.CircleGeometry(POOL.r, 64), waterMat);
+  water.rotation.x = -Math.PI/2;
+  water.position.set(POOL.x, 0.06, POOL.z);
+  scene.add(water);
+
+  // muddy/stone rim around pool
+  const rim = new THREE.Mesh(
+    new THREE.RingGeometry(POOL.r*0.98, POOL.r*1.22, 64),
+    new THREE.MeshStandardMaterial({ color:0x6b5238, roughness:1 })
+  );
+  rim.rotation.x = -Math.PI/2;
+  rim.position.set(POOL.x, 0.03, POOL.z);
+  rim.receiveShadow = true;
+  scene.add(rim);
+
+  // ----------------------------------------------------------------------
+  //  Wooden fences around the field
+  // ----------------------------------------------------------------------
+  const woodMat = new THREE.MeshStandardMaterial({ color:0x9c6b3f, roughness:0.85 });
+  const woodDark = new THREE.MeshStandardMaterial({ color:0x7c5230, roughness:0.9 });
+
+  function fencePost(x,z){
+    const g = new THREE.Group();
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.22,1.25,0.22), woodDark);
+    post.position.y = 0.62; post.castShadow=true; post.receiveShadow=true;
+    // pointed cap
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(0.18,0.22,4), woodMat);
+    cap.position.y = 1.32; cap.rotation.y=Math.PI/4; cap.castShadow=true;
+    g.add(post,cap);
+    g.position.set(x,0,z);
+    return g;
+  }
+  function fenceRail(x1,z1,x2,z2,y){
+    const dx=x2-x1, dz=z2-z1;
+    const len=Math.hypot(dx,dz);
+    const rail=new THREE.Mesh(new THREE.BoxGeometry(len,0.16,0.1), woodMat);
+    rail.position.set((x1+x2)/2, y, (z1+z2)/2);
+    rail.rotation.y = -Math.atan2(dz,dx);
+    rail.castShadow=true; rail.receiveShadow=true;
+    return rail;
+  }
+  function buildFenceLine(x1,z1,x2,z2,segments){
+    const grp=new THREE.Group();
+    for(let i=0;i<=segments;i++){
+      const t=i/segments;
+      grp.add(fencePost(x1+(x2-x1)*t, z1+(z2-z1)*t));
+    }
+    grp.add(fenceRail(x1,z1,x2,z2,0.85));
+    grp.add(fenceRail(x1,z1,x2,z2,0.45));
+    return grp;
+  }
+  const fences = new THREE.Group();
+  const fx0=FIELD.minX+0.4, fx1=FIELD.maxX-0.4, fz0=FIELD.minZ+0.4, fz1=FIELD.maxZ-0.4;
+  fences.add(buildFenceLine(fx0,fz0,fx1,fz0,9)); // back
+  fences.add(buildFenceLine(fx0,fz0,fx0,fz1,7)); // left
+  fences.add(buildFenceLine(fx1,fz0,fx1,fz1,7)); // right
+  // front-left & front-right (leave a gap in middle/front so the view is open)
+  fences.add(buildFenceLine(fx0,fz1,-2.4,fz1,2));
+  fences.add(buildFenceLine(2.4,fz1,fx1,fz1,2));
+  scene.add(fences);
+
+  // a couple of decorative bushes / haystack for the farm
+  function bush(x,z,s,col){
+    const m=new THREE.Mesh(new THREE.IcosahedronGeometry(s,1),
+      new THREE.MeshStandardMaterial({color:col||0x3f7a2e, roughness:1, flatShading:true}));
+    m.position.set(x, s*0.7, z); m.castShadow=true; m.receiveShadow=true;
+    m.scale.y=0.8; scene.add(m); return m;
+  }
+  bush(5.7,-4.2,0.9); bush(6.5,-3.4,0.6); bush(-6.8,2.0,0.8);
+  // haystack
+  (function(){
+    const hay=new THREE.Mesh(new THREE.CylinderGeometry(0.8,0.8,1.1,16),
+      new THREE.MeshStandardMaterial({color:0xd9b84a,roughness:1}));
+    hay.position.set(5.4,0.55,2.6); hay.rotation.z=Math.PI/2; hay.castShadow=true; scene.add(hay);
+  })();
+
+  // ----------------------------------------------------------------------
+  //  Soft blob shadow texture (for sprite + ball)
+  // ----------------------------------------------------------------------
+  const blobTex = (function(){
+    const c=document.createElement('canvas'); c.width=c.height=128;
+    const g=c.getContext('2d');
+    const grd=g.createRadialGradient(64,64,4,64,64,64);
+    grd.addColorStop(0,'rgba(0,0,0,0.5)'); grd.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=grd; g.fillRect(0,0,128,128);
+    return new THREE.CanvasTexture(c);
+  })();
+  function makeBlob(){
+    const m=new THREE.Mesh(new THREE.PlaneGeometry(1,1),
+      new THREE.MeshBasicMaterial({map:blobTex,transparent:true,depthWrite:false}));
+    m.rotation.x=-Math.PI/2; m.position.y=0.02; scene.add(m); return m;
+  }
+
+  // ----------------------------------------------------------------------
+  //  Star sparkle texture
+  // ----------------------------------------------------------------------
+  const starTex = (function(){
+    const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
+    g.translate(32,32); g.fillStyle='#fff6a8';
+    g.beginPath();
+    for(let i=0;i<8;i++){
+      const a=i*Math.PI/4; const r=(i%2===0)?28:11;
+      g.lineTo(Math.cos(a)*r, Math.sin(a)*r);
+    }
+    g.closePath();
+    g.shadowColor='#ffd84d'; g.shadowBlur=8; g.fill();
+    return new THREE.CanvasTexture(c);
+  })();
+
+  // ----------------------------------------------------------------------
+  //  Pokémon (billboard sprite from Gen-1 set)
+  // ----------------------------------------------------------------------
+  const ART = id => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
+  const texLoader = new THREE.TextureLoader();
+  texLoader.crossOrigin = 'anonymous';
+
+  const pokeSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map:null, transparent:true, color:0xffffff, depthWrite:false
+  }));
+  const POKE_SIZE = 3.1;
+  pokeSprite.scale.set(POKE_SIZE,POKE_SIZE,1);
+  pokeSprite.position.set(0,1.7,-0.5);
+  scene.add(pokeSprite);
+  const pokeBlob = makeBlob();
+
+  const poke = {
+    base: new THREE.Vector3(0,1.7,-0.5),
+    home: new THREE.Vector3(0,0,-0.5),
+    target: new THREE.Vector3(0,0,-0.5),
+    wanderT: 0,
+    bob: Math.random()*10,
+    size: POKE_SIZE
+  };
+
+  function pickTexture(id){
+    return new Promise((resolve)=>{
+      texLoader.load(ART(id),
+        t=>{ if(THREE.sRGBEncoding!==undefined) t.encoding = THREE.sRGBEncoding; resolve(t); },
+        undefined,
+        ()=> resolve(null));
+    });
+  }
+
+  async function spawnPokemon(){
+    const id = 1 + Math.floor(Math.random()*151);
+    const tex = await pickTexture(id);
+    if(tex){
+      if(pokeSprite.material.map) pokeSprite.material.map.dispose();
+      pokeSprite.material.map = tex;
+      pokeSprite.material.needsUpdate = true;
+    }
+    // reset transform / visibility
+    const x = rand(FIELD.minX+2.2, FIELD.maxX-2.2);
+    const z = rand(-2.0, 2.4);
+    poke.home.set(x,0,z);
+    poke.target.set(x,0,z);
+    poke.base.set(x,1.7,z);
+    pokeSprite.position.copy(poke.base);
+    pokeSprite.scale.set(poke.size, poke.size, 1);
+    pokeSprite.material.opacity = 1;
+    pokeSprite.material.color.setHex(0xffffff);
+    pokeSprite.visible = true;
+    pokeBlob.visible = true;
+  }
+
+  // ----------------------------------------------------------------------
+  //  Poké Ball (3D model with openable lid)
+  // ----------------------------------------------------------------------
+  const BALL_R = 0.5;
+  const ballGroup = new THREE.Group();
+  const topPivot  = new THREE.Group();   // hinge pivot for the lid
+  let topMat, bandMat;
+
+  (function buildBall(){
+    // bottom (white) hemisphere
+    const botMat = new THREE.MeshStandardMaterial({ color:0xf2f2f2, roughness:0.35, metalness:0.05 });
+    const bottom = new THREE.Mesh(
+      new THREE.SphereGeometry(BALL_R, 40, 24, 0, Math.PI*2, Math.PI/2, Math.PI/2), botMat);
+    bottom.castShadow=true; ballGroup.add(bottom);
+
+    // top hemisphere (colored) inside hinge pivot
+    topMat = new THREE.MeshStandardMaterial({ color:0xee1515, roughness:0.32, metalness:0.05 });
+    const top = new THREE.Mesh(
+      new THREE.SphereGeometry(BALL_R, 40, 24, 0, Math.PI*2, 0, Math.PI/2), topMat);
+    top.castShadow=true;
+    topPivot.position.set(0,0,-BALL_R);   // hinge at back rim
+    top.position.set(0,0,BALL_R);          // shift mesh back to center
+    topPivot.add(top);
+    ballGroup.add(topPivot);
+
+    // black equator band
+    bandMat = new THREE.MeshStandardMaterial({ color:0x1b1b1b, roughness:0.5 });
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(BALL_R*1.005, BALL_R*1.005, BALL_R*0.16, 40, 1, true), bandMat);
+    band.castShadow=true; ballGroup.add(band);
+
+    // center button (front, +z)
+    const btnRing = new THREE.Mesh(new THREE.CylinderGeometry(BALL_R*0.30, BALL_R*0.30, 0.05, 24), bandMat);
+    btnRing.rotation.x=Math.PI/2; btnRing.position.set(0,0,BALL_R*0.96);
+    ballGroup.add(btnRing);
+    const btn = new THREE.Mesh(new THREE.CylinderGeometry(BALL_R*0.18, BALL_R*0.18, 0.07, 24),
+      new THREE.MeshStandardMaterial({color:0xffffff, roughness:0.3, emissive:0x000000}));
+    btn.rotation.x=Math.PI/2; btn.position.set(0,0,BALL_R*0.99);
+    btn.name='knob';
+    ballGroup.add(btn);
+
+    ballGroup.scale.setScalar(1);
+    ballGroup.visible=false;
+    scene.add(ballGroup);
+  })();
+  const ballBlob = makeBlob(); ballBlob.visible=false;
+
+  const BALL_THEMES = {
+    poke:  { top:0xee1515, band:0x1b1b1b },
+    great: { top:0x2f6fd1, band:0x1b1b1b },
+    ultra: { top:0x1c1c1c, band:0xf2c200 },
+    master:{ top:0x5b2a99, band:0x1b1b1b }
+  };
+  function setBallTheme(type){
+    const t = BALL_THEMES[type] || BALL_THEMES.poke;
+    topMat.color.setHex(t.top);
+    bandMat.color.setHex(t.band);
+  }
+  function setLid(angle){ topPivot.rotation.x = angle; } // 0 closed, negative = open
+
+  // capture flash beam (cylinder between ball and pokemon)
+  const beamMat = new THREE.MeshBasicMaterial({ color:0xfff4c0, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false });
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.5,1,16,1,true), beamMat);
+  beam.visible=false; scene.add(beam);
+
+  // ----------------------------------------------------------------------
+  //  Tween engine
+  // ----------------------------------------------------------------------
+  const tweens=[];
+  function tween(duration, onUpdate, ease){
+    return new Promise(res=>{
+      tweens.push({ t:0, d:duration, u:onUpdate, e:ease||(x=>x), done:res });
+    });
+  }
+  const delay = s => tween(s, ()=>{});
+  const easeOut = x => 1-Math.pow(1-x,3);
+  const easeIn  = x => x*x*x;
+  const easeInOut = x => x<0.5 ? 4*x*x*x : 1-Math.pow(-2*x+2,3)/2;
+  function bounceOut(x){
+    const n=7.5625,d=2.75;
+    if(x<1/d) return n*x*x;
+    else if(x<2/d){x-=1.5/d; return n*x*x+0.75;}
+    else if(x<2.5/d){x-=2.25/d; return n*x*x+0.9375;}
+    else {x-=2.625/d; return n*x*x+0.984375;}
+  }
+  function updateTweens(dt){
+    for(let i=tweens.length-1;i>=0;i--){
+      const tw=tweens[i];
+      tw.t += dt;
+      let p = tw.d<=0 ? 1 : Math.min(tw.t/tw.d, 1);
+      tw.u(tw.e(p), p);
+      if(p>=1){ tweens.splice(i,1); tw.done(); }
+    }
+  }
+
+  // ----------------------------------------------------------------------
+  //  Sparkle stars
+  // ----------------------------------------------------------------------
+  function burstStars(pos){
+    for(let i=0;i<10;i++){
+      const s=new THREE.Sprite(new THREE.SpriteMaterial({map:starTex,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending}));
+      const sc=rand(0.3,0.7); s.scale.set(sc,sc,1);
+      s.position.copy(pos);
+      scene.add(s);
+      const ang=rand(0,Math.PI*2), spd=rand(0.8,2.0);
+      const vx=Math.cos(ang)*spd, vy=rand(1.2,2.6), vz=Math.sin(ang)*spd*0.5;
+      const life=rand(0.5,0.9);
+      tween(life,(p)=>{
+        s.position.x=pos.x+vx*p;
+        s.position.y=pos.y+vy*p - 2.2*p*p;
+        s.position.z=pos.z+vz*p;
+        s.material.opacity=1-p;
+        s.material.rotation += 0.2;
+      }).then(()=>{ scene.remove(s); s.material.map=null; s.material.dispose(); });
+    }
+  }
+
+  // ----------------------------------------------------------------------
+  //  Catch sequence
+  // ----------------------------------------------------------------------
+  let state='loading';
+  const dock=document.getElementById('dock');
+
+  function setBusy(b){ dock.classList.toggle('busy', b); }
+  function rand(a,b){ return a + Math.random()*(b-a); }
+  function groundY(){ return BALL_R; }
+
+  function placeBeam(a,b){
+    const mid=a.clone().add(b).multiplyScalar(0.5);
+    const len=a.distanceTo(b);
+    beam.position.copy(mid);
+    beam.scale.set(1,len,1);
+    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), b.clone().sub(a).normalize());
+  }
+
+  async function shakeOnce(dir){
+    const restY = groundY();
+    await tween(0.5,(p)=>{
+      const s=Math.sin(p*Math.PI);
+      ballGroup.rotation.z = dir * 0.5 * s;
+      ballGroup.position.x = ballX + dir * 0.18 * s;
+      ballGroup.position.y = restY + 0.12 * Math.sin(p*Math.PI);
+    }, x=>x);
+    ballGroup.rotation.z=0; ballGroup.position.x=ballX; ballGroup.position.y=restY;
+  }
+
+  let ballX=0, ballZ=0;
+
+  async function throwBall(type, rate){
+    if(state!=='idle') return;
+    state='busy'; setBusy(true);
+
+    setBallTheme(type);
+    setLid(0);
+    ballGroup.rotation.set(0,0,0);
+    ballGroup.visible=true;
+    ballBlob.visible=true;
+
+    const startPos=new THREE.Vector3(0,0.5,7.5);
+    const targetCenter=pokeSprite.position.clone();
+    ballX=targetCenter.x; ballZ=targetCenter.z;
+
+    // 1) throw arc toward pokemon
+    ballGroup.position.copy(startPos);
+    await tween(0.55,(p)=>{
+      const x=startPos.x+(targetCenter.x-startPos.x)*p;
+      const z=startPos.z+(targetCenter.z-startPos.z)*p;
+      const baseY=startPos.y+(targetCenter.y-startPos.y)*p;
+      const arc=Math.sin(p*Math.PI)*3.2;
+      ballGroup.position.set(x, baseY+arc, z);
+      ballGroup.rotation.x = -p*Math.PI*4;
+      ballBlob.position.set(x, 0.02, z);
+      const sc=0.6+0.4*p; ballBlob.scale.set(sc,sc,sc);
+      ballBlob.material.opacity=0.1+0.3*p;
+    }, easeOut);
+    ballGroup.rotation.x=0;
+
+    // 2) open lid
+    await tween(0.18,(p)=>{ setLid(-2.5*p); }, easeOut);
+
+    // 3) suck pokemon in (beam + shrink)
+    beam.visible=true;
+    placeBeam(ballGroup.position, pokeSprite.position);
+    const pStart=pokeSprite.position.clone();
+    const startScale=pokeSprite.scale.x;
+    await tween(0.5,(p)=>{
+      beam.material.opacity = Math.sin(p*Math.PI)*0.8;
+      pokeSprite.position.lerpVectors(pStart, ballGroup.position, easeIn(p));
+      const s=startScale*(1-p);
+      pokeSprite.scale.set(s,s,1);
+      pokeSprite.material.opacity=1-p;
+      // tint to white energy
+      pokeSprite.material.color.setRGB(1, 1-0.2*p, 1-0.2*p);
+      pokeBlob.material.opacity = 0.5*(1-p);
+    }, x=>x);
+    beam.visible=false; beam.material.opacity=0;
+    pokeSprite.visible=false; pokeBlob.visible=false;
+
+    // 4) close lid
+    await tween(0.16,(p)=>{ setLid(-2.5*(1-p)); }, easeIn);
+    setLid(0);
+
+    // 5) drop to ground & bounce
+    const dropFrom=ballGroup.position.y;
+    await tween(0.5,(p)=>{
+      ballGroup.position.y = groundY() + (dropFrom-groundY())*(1-bounceOut(p));
+      const sc=0.6+0.4*Math.min(1,p*1.5);
+      ballBlob.scale.set(sc,sc,sc);
+    }, x=>x);
+    ballGroup.position.set(ballX, groundY(), ballZ);
+    ballBlob.position.set(ballX,0.02,ballZ);
+    ballBlob.material.opacity=0.32;
+
+    await delay(0.3);
+
+    // 6) decide outcome & shake
+    const success = Math.random() < rate;
+    const shakes = success ? 3 : ([0,1,2][Math.floor(Math.random()*3)]);
+
+    for(let i=0;i<shakes;i++){
+      await shakeOnce(i%2===0 ? -1 : 1);
+      await delay(0.22);
+    }
+
+    if(success){
+      await delay(0.15);
+      // confirmation: a little click hop + glow + stars
+      await tween(0.25,(p)=>{
+        ballGroup.position.y = groundY() + Math.sin(p*Math.PI)*0.18;
+      }, x=>x);
+      burstStars(new THREE.Vector3(ballX, groundY()+0.2, ballZ));
+      // brief glow on the button
+      await delay(1.1);
+      // fade ball out, then a fresh pokemon appears
+      await tween(0.4,(p)=>{
+        ballGroup.scale.setScalar(1-0.4*p);
+        ballGroup.position.y = groundY()*(1) ;
+        ballBlob.material.opacity=0.32*(1-p);
+      }, easeIn);
+      ballGroup.visible=false; ballBlob.visible=false; ballGroup.scale.setScalar(1);
+      await spawnPokemon();
+      await flashAppear();
+    } else {
+      // burst open & pokemon escapes
+      await tween(0.14,(p)=>{ setLid(-2.6*p); }, easeOut);
+      // flash
+      beam.visible=true;
+      placeBeam(ballGroup.position, poke.base.clone());
+      pokeSprite.position.copy(ballGroup.position);
+      pokeSprite.scale.set(0.05,0.05,1);
+      pokeSprite.material.opacity=1;
+      pokeSprite.material.color.setHex(0xffffff);
+      pokeSprite.visible=true; pokeBlob.visible=true;
+      const back=poke.base.clone();
+      await tween(0.45,(p)=>{
+        beam.material.opacity=Math.sin(p*Math.PI)*0.7;
+        pokeSprite.position.lerpVectors(ballGroup.position, back, easeOut(p));
+        const s=poke.size*Math.min(1, p*1.2);
+        pokeSprite.scale.set(s,s,1);
+        pokeBlob.material.opacity=0.5*p;
+      }, x=>x);
+      beam.visible=false; beam.material.opacity=0;
+      pokeSprite.position.copy(poke.base);
+      pokeSprite.scale.set(poke.size,poke.size,1);
+      pokeSprite.material.color.setHex(0xffffff);
+      // close & hide ball
+      setLid(0);
+      ballGroup.visible=false; ballBlob.visible=false;
+    }
+
+    state='idle'; setBusy(false);
+  }
+
+  async function flashAppear(){
+    pokeSprite.material.color.setHex(0xffffff);
+    pokeSprite.scale.set(0.05,0.05,1);
+    pokeSprite.material.opacity=1;
+    await tween(0.4,(p)=>{
+      const s=poke.size*bounceOut(Math.min(1,p*1.1));
+      pokeSprite.scale.set(s,s,1);
+    }, x=>x);
+    pokeSprite.scale.set(poke.size,poke.size,1);
+  }
+
+  // ----------------------------------------------------------------------
+  //  Sky texture helper
+  // ----------------------------------------------------------------------
+  function makeSkyTexture(){
+    const c=document.createElement('canvas'); c.width=4; c.height=256;
+    const g=c.getContext('2d');
+    const grd=g.createLinearGradient(0,0,0,256);
+    grd.addColorStop(0,'#8fd0f7');
+    grd.addColorStop(0.55,'#bfe8ff');
+    grd.addColorStop(1,'#e9f7e0');
+    g.fillStyle=grd; g.fillRect(0,0,4,256);
+    const t=new THREE.CanvasTexture(c);
+    return t;
+  }
+
+  // ----------------------------------------------------------------------
+  //  Idle wandering & render loop
+  // ----------------------------------------------------------------------
+  const clock=new THREE.Clock();
+  function updateIdle(dt,t){
+    if(state==='idle' && pokeSprite.visible){
+      poke.wanderT -= dt;
+      if(poke.wanderT<=0){
+        poke.wanderT = rand(1.6,3.2);
+        poke.target.set(
+          rand(FIELD.minX+2.4, FIELD.maxX-2.4),
+          0,
+          rand(-2.2, 2.4)
+        );
+      }
+      poke.home.x += (poke.target.x-poke.home.x)*Math.min(1,dt*0.9);
+      poke.home.z += (poke.target.z-poke.home.z)*Math.min(1,dt*0.9);
+      const bob=Math.sin(t*3+poke.bob)*0.12;
+      pokeSprite.position.set(poke.home.x, 1.7+bob, poke.home.z);
+      poke.base.copy(pokeSprite.position);
+      // face direction of travel via slight squash
+      pokeBlob.position.set(poke.home.x, 0.02, poke.home.z);
+      const bs=poke.size*0.62; pokeBlob.scale.set(bs,bs,bs);
+      pokeBlob.material.opacity=0.32;
+    }
+  }
+
+  function render(){
+    requestAnimationFrame(render);
+    const dt=Math.min(clock.getDelta(),0.05);
+    const t=clock.elapsedTime;
+    updateTweens(dt);
+    updateIdle(dt,t);
+    grassMat.uniforms.uTime.value=t;
+    waterMat.uniforms.uTime.value=t;
+    // subtle camera sway
+    camera.position.x = Math.sin(t*0.18)*0.35;
+    camera.lookAt(0,1.5,-0.5);
+    renderer.render(scene,camera);
+  }
+
+  function resize(){
+    const w=window.innerWidth, h=window.innerHeight;
+    renderer.setSize(w,h,false);
+    camera.aspect=w/h;
+    // widen FOV a touch on tall/narrow (portrait) screens so the scene fits
+    camera.fov = h>w ? 62 : 48;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+
+  // ----------------------------------------------------------------------
+  //  Controls
+  // ----------------------------------------------------------------------
+  dock.querySelectorAll('.ball-btn').forEach(btn=>{
+    const handler=(e)=>{
+      e.preventDefault();
+      const type=btn.dataset.ball;
+      const rate=parseFloat(btn.dataset.rate);
+      throwBall(type, rate);
+    };
+    btn.addEventListener('click', handler);
+  });
+
+  // ----------------------------------------------------------------------
+  //  Boot
+  // ----------------------------------------------------------------------
+  resize();
+  render();
+  (async function boot(){
+    await spawnPokemon();
+    await flashAppear();
+    document.getElementById('loading').classList.add('hide');
+    state='idle';
+  })();
+
+})();
+</script>
+</body>
+</html>
