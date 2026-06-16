@@ -693,10 +693,11 @@ function spawnKoi() {
     fleeDir: 0,
     age: 0,
     patches: makePatches(type, Math.random),
-    spatter: Array.from({ length: 5 + Math.floor(Math.random() * 6) }, () => ({
-      d: 0.55 + Math.random() * 0.65,
-      s: (Math.random() * 2 - 1) * 0.35,
-      r: 0.004 + Math.random() * 0.012
+    curve: 0,
+    spatter: Array.from({ length: 2 + Math.floor(Math.random() * 3) }, () => ({
+      d: 0.7 + Math.random() * 0.5,
+      s: (Math.random() * 2 - 1) * 0.28,
+      r: 0.004 + Math.random() * 0.009
     }))
   });
 }
@@ -733,6 +734,8 @@ function updateKoi(dt) {
     f.age += dt;
     f.phase += dt * (3.2 + f.fear * 9);
     f.heading += Math.sin(state.time * 0.35 + f.seed) * 0.30 * dt;
+    // slowly evolving body arc so the koi always reads as gliding through a curve
+    f.curve = Math.sin(state.time * 0.25 + f.seed) * 0.42 + f.fear * Math.sin(f.phase) * 0.2;
 
     if (f.fear > 0.02) {
       let diff = f.fleeDir - f.heading;
@@ -774,7 +777,11 @@ function computeSpine(f) {
   for (let i = 0; i < KOI_N; i++) {
     const t = i / (KOI_N - 1);
     const along = (0.5 - t) * f.len;
-    const sway = Math.sin(f.phase - t * 4.2) * f.len * (0.012 + 0.055 * t);
+    // a graceful body: a slow constant arc (bows the midsection to one side)
+    // plus a gentle travelling undulation that grows toward the tail
+    const arc = (f.curve || 0) * Math.sin(t * Math.PI) * f.len;
+    const wave = Math.sin(f.phase - t * 3.4) * f.len * (0.010 + 0.045 * t);
+    const sway = arc + wave;
     pts.push({ x: f.x + ch * along - sh * sway, y: f.y + sh * along + ch * sway });
   }
   for (let i = 0; i < KOI_N; i++) {
@@ -813,6 +820,25 @@ function blobPath(path, cx, cy, rx, ry, rot, lobes) {
     pts.push({ x: cx + x * cr - y * sr, y: cy + x * sr + y * cr });
   }
   smoothClosed(path, pts);
+}
+
+// A flowing petal/leaf shape that curves to one side — used for the big
+// sweeping pectoral fins and the lobes of the caudal fin. `bend` (in units
+// of L) sweeps the tip and the edges sideways so the fin trails gracefully.
+function petalPath(path, bx, by, ang, L, W, bend) {
+  const ux = Math.cos(ang), uy = Math.sin(ang);
+  const px = -uy, py = ux;
+  const off = bend * L;
+  const tipx = bx + ux * L + px * off;
+  const tipy = by + uy * L + py * off;
+  const lcx = bx + ux * L * 0.5 + px * (W + off * 0.6);
+  const lcy = by + uy * L * 0.5 + py * (W + off * 0.6);
+  const rcx = bx + ux * L * 0.5 + px * (-W + off * 0.6);
+  const rcy = by + uy * L * 0.5 + py * (-W + off * 0.6);
+  path.moveTo(bx + px * W * 0.35, by + py * W * 0.35);
+  path.quadraticCurveTo(lcx, lcy, tipx, tipy);
+  path.quadraticCurveTo(rcx, rcy, bx - px * W * 0.35, by - py * W * 0.35);
+  path.closePath();
 }
 
 // Fill a path so only its blurred shadow lands on screen — a soft ink wash
@@ -879,25 +905,39 @@ function drawKoi(ctx, f) {
   const body = new Path2D();
   smoothClosed(body, left.concat(right.slice().reverse()));
 
-  // all fins as one wash of brush sweeps, under the body
+  // all fins as one soft translucent wash, drawn under the body so the
+  // body overlaps their roots and they appear to grow from it
   const fins = new Path2D();
+  const sway = Math.sin(f.phase - 4.6) * 0.30 + (f.curve || 0) * 0.5;
 
-  // tail: a few wide ribbon strokes rooted inside the peduncle so the
-  // body flows into the caudal fin, all bending with the sway
-  const tb = spineSample(pts, 0.90);
-  const tailSway = Math.sin(f.phase - 4.6) * 0.5;
-  const tDir = tb.tang + tailSway * 0.35;
-  const NT = 3;
-  for (let k = 0; k < NT; k++) {
-    const t = NT > 1 ? k / (NT - 1) : 0.5;
-    const ang = tDir + (t - 0.5) * 0.42;
-    const jitter = 0.88 + (Math.sin(f.seed * 7 + k * 13) * 0.5 + 0.5) * 0.24;
-    const L = f.len * (0.42 - 0.10 * Math.sin(t * Math.PI)) * jitter;
-    addBrushStroke(fins, tb.x, tb.y, ang, L, f.len * 0.048,
-      tailSway * 0.45 + (t - 0.5) * 0.10);
+  // caudal fin: a large flowing bilobed tail streaming off the very tail tip
+  const tb = spineSample(pts, 0.97);
+  const tDir = tb.tang + sway * 0.6;
+  petalPath(fins, tb.x, tb.y, tDir + 0.36, f.len * 0.46, f.len * 0.10, sway * 0.5 + 0.18);
+  petalPath(fins, tb.x, tb.y, tDir - 0.30, f.len * 0.42, f.len * 0.09, sway * 0.5 - 0.16);
+  petalPath(fins, tb.x, tb.y, tDir, f.len * 0.30, f.len * 0.06, sway * 0.5);
+
+  // pectoral fins: large swept-back wings fanning out from the shoulders
+  const shoulder = spineSample(pts, 0.28);
+  for (const s of [-1, 1]) {
+    const flap = Math.sin(f.phase * 0.8 + (s > 0 ? 0 : Math.PI)) * 0.18;
+    const bx = shoulder.x + shoulder.nx * s * shoulder.w * maxW * 0.7;
+    const by = shoulder.y + shoulder.ny * s * shoulder.w * maxW * 0.7;
+    const ang = f.heading + s * (1.78 + flap);
+    petalPath(fins, bx, by, ang, f.len * 0.44, f.len * 0.135, s * (0.7 + flap));
   }
 
-  // dried spatter trailing beyond the tail
+  // pelvic fins: a smaller trailing pair further back
+  const pelvic = spineSample(pts, 0.58);
+  for (const s of [-1, 1]) {
+    const bx = pelvic.x + pelvic.nx * s * pelvic.w * maxW * 0.6;
+    const by = pelvic.y + pelvic.ny * s * pelvic.w * maxW * 0.6;
+    petalPath(fins, bx, by, f.heading + s * 2.35, f.len * 0.22, f.len * 0.07, s * 0.55);
+  }
+
+  softFill(ctx, fins, f.type.fin, B * 1.4);
+
+  // a few faint sumi specks trailing off the tail tip
   const spat = new Path2D();
   for (const sp2 of f.spatter) {
     const sx = tb.x + Math.cos(tDir) * sp2.d * f.len - Math.sin(tDir) * sp2.s * f.len;
@@ -906,24 +946,7 @@ function drawKoi(ctx, f) {
     spat.moveTo(sx + r, sy);
     spat.arc(sx, sy, r, 0, Math.PI * 2);
   }
-  softFill(ctx, spat, 'rgba(48,43,46,0.50)', B * 0.5);
-
-  // pectoral and pelvic pairs: short wide sweeps hugging the body
-  for (const [tPos, finL, baseAng, n] of [[0.24, 0.19, 1.95, 2], [0.60, 0.11, 2.25, 1]]) {
-    const fp = spineSample(pts, tPos);
-    for (const s of [-1, 1]) {
-      const flap = Math.sin(f.phase * 0.9 + (s > 0 ? 0 : Math.PI)) * 0.14;
-      const bx = fp.x + fp.nx * s * fp.w * maxW * 0.55;
-      const by = fp.y + fp.ny * s * fp.w * maxW * 0.55;
-      for (let k = 0; k < n; k++) {
-        const ang = f.heading + s * (baseAng + flap + (k - (n - 1) / 2) * 0.30);
-        addBrushStroke(fins, bx, by, ang, f.len * finL * (1 - k * 0.15),
-          f.len * 0.030, s * 0.16);
-      }
-    }
-  }
-
-  softFill(ctx, fins, f.type.fin, B * 0.9);
+  softFill(ctx, spat, 'rgba(48,43,46,0.32)', B * 0.5);
 
   // body: a narrow bleed fringe around a solid core so the
   // silhouette stays crisp like a loaded brush stroke
