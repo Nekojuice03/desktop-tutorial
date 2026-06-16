@@ -394,7 +394,7 @@
   })();
 
   // ----------------------------------------------------------------------
-  //  Pokémon (billboard sprite from Gen-1 set)
+  //  Pokémon (billboard sprite from the National Dex, #1–1025)
   // ----------------------------------------------------------------------
   const ART = id => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
   const texLoader = new THREE.TextureLoader();
@@ -427,9 +427,14 @@
     });
   }
 
+  const DEX_MAX = 1025; // 全國圖鑑目前總數
   async function spawnPokemon(){
-    const id = 1 + Math.floor(Math.random()*151);
-    const tex = await pickTexture(id);
+    // 隨機抽一隻；若該編號的立繪缺圖，換一隻再試
+    let tex = null;
+    for(let tries=0; tries<6 && !tex; tries++){
+      const id = 1 + Math.floor(Math.random()*DEX_MAX);
+      tex = await pickTexture(id);
+    }
     if(tex){
       if(pokeSprite.material.map) pokeSprite.material.map.dispose();
       pokeSprite.material.map = tex;
