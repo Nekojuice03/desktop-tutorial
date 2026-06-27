@@ -163,6 +163,56 @@ footer{
   .el-grid{grid-template-columns:repeat(3,1fr)}
   .el-circle{width:48px;height:48px;font-size:1.2rem}
 }
+
+/* ── Detailed Love Analysis ── */
+.love-type-header{text-align:center;margin-bottom:18px}
+.love-type-name{font-size:1.4rem;color:var(--gold);letter-spacing:4px;margin-bottom:4px}
+.love-type-sub{font-size:.78rem;color:var(--text-dim);letter-spacing:2px}
+.love-2col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+.love-block{background:rgba(8,8,20,.55);border:1px solid var(--gold-dim);border-radius:10px;padding:18px}
+.love-block-title{color:var(--gold);font-size:.78rem;letter-spacing:3px;margin-bottom:9px;padding-bottom:7px;border-bottom:1px solid rgba(201,168,76,.15)}
+.love-block-body{font-size:.84rem;line-height:2.05;color:rgba(232,213,163,.83)}
+.love-fullrow{background:rgba(8,8,20,.55);border:1px solid var(--gold-dim);border-radius:10px;padding:18px;margin-bottom:14px}
+.love-fullrow-title{color:var(--gold);font-size:.78rem;letter-spacing:3px;margin-bottom:10px}
+.love-tab-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.love-tab{background:rgba(8,8,20,.55);border:1px solid var(--gold-dim);border-radius:10px;padding:16px}
+.love-tab-label{font-size:.7rem;color:var(--gold);letter-spacing:3px;margin-bottom:9px;display:flex;align-items:center;gap:6px}
+.love-tab-body{font-size:.83rem;line-height:2.05;color:rgba(232,213,163,.83)}
+.advice-list{list-style:none;margin-top:10px}
+.advice-list li{font-size:.84rem;line-height:1.9;color:rgba(232,213,163,.83);padding:5px 0 5px 20px;position:relative;border-bottom:1px solid rgba(201,168,76,.07)}
+.advice-list li:last-child{border-bottom:none}
+.advice-list li::before{content:'✦';position:absolute;left:0;color:var(--gold);font-size:.65rem;top:8px}
+.compat-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:center}
+.compat-label{font-size:.72rem;color:var(--text-dim);margin-right:4px}
+.compat-tag{font-size:.74rem;padding:4px 13px;border-radius:14px;border:1px solid}
+
+/* Monthly love chart */
+.month-chart{margin-top:6px}
+.month-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.month-name{width:44px;font-size:.71rem;color:var(--text-dim);text-align:right;flex-shrink:0}
+.month-bar-wrap{flex:1;background:rgba(255,255,255,.05);border-radius:5px;height:9px;overflow:hidden}
+.month-bar-fill{height:100%;border-radius:5px;transition:width 1.2s ease .15s}
+.month-stars-txt{font-size:.68rem;color:var(--gold);flex-shrink:0;width:55px}
+.month-pb-tag{font-size:.62rem;padding:2px 7px;border-radius:8px;background:rgba(201,168,76,.18);color:var(--gold);flex-shrink:0;letter-spacing:.5px}
+
+/* ── Quarterly Fortune ── */
+.q-overview{font-size:.88rem;line-height:2.1;color:rgba(232,213,163,.85);margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--gold-dim)}
+.q-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+.q-card{background:rgba(8,8,20,.55);border:1px solid var(--gold-dim);border-radius:10px;padding:18px}
+.q-season{font-size:.95rem;color:var(--gold);letter-spacing:3px;margin-bottom:3px}
+.q-months{font-size:.68rem;color:var(--text-dim);letter-spacing:1px;margin-bottom:8px}
+.q-score{font-size:.72rem;color:var(--gold);letter-spacing:1px;margin-bottom:8px}
+.q-body{font-size:.83rem;line-height:2.05;color:rgba(232,213,163,.83)}
+.q-tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.q-tag{font-size:.66rem;padding:3px 9px;border-radius:9px;border:1px solid rgba(201,168,76,.3);color:var(--gold);background:rgba(201,168,76,.07)}
+.lucky-caution-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.lc-item{background:rgba(8,8,20,.4);border:1px solid var(--gold-dim);border-radius:9px;padding:14px}
+.lc-label{font-size:.7rem;color:var(--text-dim);letter-spacing:2px;margin-bottom:7px}
+.lc-val{font-size:.9rem;color:var(--gold)}
+
+@media(max-width:580px){
+  .love-2col,.love-tab-row,.q-grid,.lucky-caution-row{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -261,6 +311,18 @@ footer{
   <div class="section">
     <div class="sec-title" id="year-fortune-title">今 年 流 年 運 勢</div>
     <div class="year-box" id="year-fortune-box"></div>
+  </div>
+
+  <!-- Detailed Love Analysis -->
+  <div class="section">
+    <div class="sec-title">♡ 感 情 全 方 位 解 析 ♡</div>
+    <div id="love-detail-box"></div>
+  </div>
+
+  <!-- Quarterly Year Fortune -->
+  <div class="section">
+    <div class="sec-title" id="q-title">流 年 四 季 詳 析</div>
+    <div id="quarterly-box"></div>
   </div>
 
   <!-- Fortune Cards -->
@@ -542,6 +604,200 @@ function yearFortuneText(dmStem, elCounts, currentY){
 }
 
 /* ════════════════════════════════════════════
+   DETAILED LOVE ANALYSIS DATA
+════════════════════════════════════════════ */
+const LOVE_DETAILED={
+  '木':{
+    type:'理想主義型戀人',
+    nature:'在感情世界裡，您是不折不扣的理想主義者。您渴望的不只是日常相伴，而是靈魂層次的深度連結——一個能理解您內心世界、與您共同追求理想的靈魂伴侶。愛情對您是一種相互成長的旅程，您願意為感情付出大量時間與心力，也期待對方同樣認真投入，淺薄的關係讓您快速失去興趣。',
+    style:'您的愛情風格矜持而深沉，初見面時不易表露心意，需要一段時間觀察才能打開心扉。但一旦確認了心意，便會全力投入，忠誠度極高，不輕易放棄。您重視感情中的精神交流，喜歡和伴侶分享想法、探索共同的理想，討厭沒有深度的膚淺互動。',
+    ideal:'最適合您的伴侶是能激發您熱情的「火行」（丙丁日主）——他們的活力與熱忱點燃您的積極性，木生火帶來相互激勵的美好互動。同樣，「水行」（壬癸）以溫柔智慧滋養您，讓您感到被理解與深深支持。與「金行」（庚辛）發展深度關係需多思量，金克木的能量可能帶來控制感或無形的壓迫。',
+    challenge:'您最大的感情障礙，往往是自己設立的過高標準。理想與現實的落差、不善言語表達情感的習慣，以及偶爾出現的固執，都可能讓好緣分在萌芽前就默默凋零。接受感情中的不完美，勇敢說出愛，是您這一生最重要的感情修煉課題。',
+    single:'單身的您，桃花運與主動態度成正比。您的獨特氣質常讓對方誤以為您不感興趣，因此適時發出「我對你有好感」的信號至關重要。參加讀書會、課程、戶外活動等場合最容易遇到志同道合的對象，而且您天生適合「日久生情」的感情節奏——讓對方在穩定接觸中慢慢欣賞您的深度。',
+    coupled:'有伴侶的您，今年最需要關注「溝通品質」。您可能因習慣默默付出而忽略伴侶對言語表達的渴望，嘗試更主動說出「謝謝你」「我愛你」，往往比任何行動都更直接觸動對方的心。若近期感情出現摩擦，根源往往在於雙方對未來規劃的分歧，坦誠溝通遠比迴避問題有效。',
+    advice:['主動出擊，不要因矜持讓緣分悄悄溜走','練習每天說一句真心話給對方聽，從小事做起','放下完美主義，接受伴侶真實且不完美的樣子','共同制定未來計劃，讓感情有方向感和儀式感'],
+    compatible:'火行（相互激勵）、水行（滋養支持）',
+    compatEl:['火','水'],
+    cautionEl:['金'],
+  },
+  '火':{
+    type:'熱情浪漫型戀人',
+    nature:'您天生是感情世界中的主角，充滿熱情與魅力，有著讓人難以抵抗的吸引力。愛情對您是一場盛大的慶典，您享受每一個令人心跳加速的瞬間——初見時的心動、深夜長談的溫暖、每一個精心布置的浪漫驚喜。您的存在本身就是一種能量場，能感染和點燃身邊的每一個人。',
+    style:'您的愛情風格直接而熱烈，喜歡一個人便勇敢行動，不喜歡拐彎抹角或暗示等待。您擅長製造浪漫，對伴侶極為大方，讓對方時刻感到被珍愛與重視。然而熱戀期多熱烈，平淡期的考驗往往更大——維持熱情的持久度是您感情修煉中最核心的功課。',
+    ideal:'最適合您的是「土行」（戊己日主），您的熱情豐富了他們的生活，他們的穩定給您踏實的依靠，火生土形成絕妙的互補。「木行」（甲乙）也非常適合，因木生火，他們持續給予您靈感與動力，讓您的熱情有源源不絕的燃料。與「水行」（壬癸）相處需謹慎，水克火容易在情感上形成消耗，或讓您感到被壓制。',
+    challenge:'您的感情挑戰在於「穩定持久」與「情緒管理」。熱戀期您是全世界最好的伴侶，但新鮮感消退後容易感到無趣甚至被困住。另外，衝動之下說出的傷人話語，往往是感情最大的傷害源——記住，言語一旦說出便無法收回，三思而後言是您守護感情的關鍵武器。',
+    single:'您的桃花運向來旺盛，但「多」不等於「對」。今年建議把注意力從「吸引了多少人」轉移到「認真了解一個人」。適合您的對象往往不是讓您最心跳加速的，而是讓您最感到輕鬆自在、可以真正做自己的那個人——放慢腳步，用心辨別是一時熱情還是真正的緣分。',
+    coupled:'有伴侶的您，今年感情需要刻意「升溫」。日常規律容易讓您感到乏味，建議主動規劃共同的新鮮體驗——一起學新技能、去沒去過的地方、挑戰對方提議過的活動。避免在爭吵時說出傷及底線的話，您的言語力量很強，有時您以為說說就算的話，卻在對方心裡留下很深的傷痕。',
+    advice:['學習在平淡的日常中發現愛的美好，不只追求激烈的刺激','爭吵時先暫停30秒深呼吸，情緒降溫後再開口溝通','給伴侶獨立的空間與時間，愛不等於時刻黏在一起','用心了解再做承諾，不要讓一時的熱情決定一輩子'],
+    compatible:'土行（穩定互補）、木行（熱情倍增）',
+    compatEl:['土','木'],
+    cautionEl:['水'],
+  },
+  '土':{
+    type:'忠誠踏實型戀人',
+    nature:'您在感情中如同大地，給予伴侶最穩固的安全感與最深厚的包容。您不善花言巧語，卻用行動詮釋著深沉的愛——默默付出、在最需要時出現、任勞任怨從不喊苦。這種踏實的愛雖不如烈火炙熱，卻如同溫泉，讓人在其中感到安慰、治癒與心安，是最能讓對方依靠的伴侶類型。',
+    style:'您的愛情風格保守而深情，不會輕易對一個人動心，但一旦認定，便是全心全意、山盟海誓的那種。您重視感情的穩定，不喜歡大起大落的情感波動，喜歡在平靜中慢慢培養深厚的情感。您的感情往往是越久越醇、細水長流型，越陪伴越讓對方放不開。',
+    ideal:'最適合您的是「金行」（庚辛日主），土生金，您的包容與穩定能培育出對方的才華，彼此和諧相融。「火行」（丙丁）的伴侶也很適合，火生土，他們的熱情為您帶來活力與溫暖，激活您生命中更豐富的色彩，讓本來低調的您變得更有光彩。與「木行」（甲乙）在感情上容易有壓力，木克土使關係中容易出現主導權的拉扯。',
+    challenge:'您最大的感情障礙是「過度付出卻表達不足」。您習慣用行動默默愛，卻不善於言語表達，久而久之伴侶可能誤解您冷漠，或因感受不到被珍惜而心生嫌隙。另一個挑戰是行動偏慢，有時在最佳時機前仍在觀望等待，讓好緣分悄悄溜走，令自己懊悔不已。',
+    single:'單身的您，往往因為太低調而被忽視，即便心儀也難以主動。您最適合「日久生情」的感情模式——在熟悉的環境中（工作夥伴、朋友圈、長期往來的社群）自然建立感情。今年建議發展一個能展現您優點的社交興趣，在穩定的互動中讓對方慢慢看見您獨特且珍貴的魅力。',
+    coupled:'有伴侶的您，感情基礎紮實，是彼此生命中最可靠的支柱。今年最大的課題是對抗「習以為常」——感情最易在穩定中漸漸失去溫度。嘗試一個月共同做一件沒做過的事，偶爾說出「謝謝你一直在」，這些看似微小的動作，其實威力遠超您的想像，能讓感情的溫度持續升溫。',
+    advice:['練習用語言表達感情，不要讓行動獨自承擔全部','主動一點，心動了就說出來，別讓對方一直猜','感情中也要保有自己的主見與獨立空間','定期和伴侶進行深度對話，聊聊彼此的感受與對未來的期待'],
+    compatible:'金行（相互成就）、火行（溫暖互動）',
+    compatEl:['金','火'],
+    cautionEl:['木'],
+  },
+  '金':{
+    type:'原則堅守型戀人',
+    nature:'您在感情世界中有著清晰的標準與深厚的原則感，對愛情極為認真而專一。您不輕易動心，但一旦確認了對象，便以高度忠誠和責任感全力投入，從不三心二意。您重視感情中的誠信與承諾，對欺騙或背叛零容忍，您是感情中最值得信賴的那種人，也渴望得到同等程度的真誠回應。',
+    style:'您的愛情風格理性而深沉，初期接觸顯得冷靜甚至帶有距離感，讓人摸不透您的心意。但這並非不感興趣，而是您在認真評估與觀察。一旦通過了您的「觀察期」，您的愛其實非常深厚，只是表達方式偏向實際行動而非甜言蜜語——記住對方的喜好、在需要時默默出現、把事情處理好，都是您愛的語言。',
+    ideal:'最適合您的是「水行」（壬癸日主），金生水，您的嚴謹與決斷能滋養對方的智慧，彼此相輔相成，碰撞出意想不到的美好火花。「土行」（戊己）也很適合，土生金，他們的包容與穩定化解您的稜角，讓您感到踏實安心。「火行」（丙丁）與您容易碰撞，火克金的關係需要雙方更多的包容、磨合與成熟的溝通。',
+    challenge:'您的感情難題在於「情感表達」與「接受不完美」。您內心情感深厚，外表卻冷靜自持，讓伴侶常常不確定您是否真的在乎。另外，完美主義傾向讓您對感情有較高期待，有時對伴侶的小缺點過於計較，忘了真正的愛本身就是選擇接受一個不完美的人，然後一起努力成長。',
+    single:'您散發著一種獨立而有深度的氣質，對某些人來說非常有吸引力。今年感情機緣可能在工作場合或專業社群中出現，與您在同一領域且有相似追求的人最容易擦出火花。建議試著降低第一印象的篩選標準，不必第一面就評估「是否完全符合條件」，先讓自己享受相處的自然過程。',
+    coupled:'有伴侶的您，今年最重要的功課是「柔軟度」。您在許多事情上都很有原則，但感情需要的彈性往往比您預期的更多。試著主動說「對不起」和「謝謝你」，這不是軟弱，而是讓感情走得更長遠最有效的方法。遇到意見分歧時，記得對方的立場也有其合理之處。',
+    advice:['在日常小事中表達關心，不必等重要場合才行動','減少對伴侶的批評，多說欣賞與肯定的話','感情裡的適度妥協是智慧，不是退讓','讓伴侶了解你的內心世界，打開那扇有點鏽的心門'],
+    compatible:'水行（相互成就）、土行（穩定支持）',
+    compatEl:['水','土'],
+    cautionEl:['火'],
+  },
+  '水':{
+    type:'深情敏銳型戀人',
+    nature:'您在感情中有著如水般流動的特質——深情而敏銳，能細微感受到伴侶的情緒變化，在對方最需要時給予最到位的關懷與理解。您的感情世界豐富而複雜，有著他人難以想象的情感深度。對您而言，感情不只是喜歡，更是靈魂的共鳴與真正的心靈相通，您需要的不是美麗的關係，而是真實的連結。',
+    style:'您的愛情風格飄逸而神秘，有一種讓人難以捉摸卻偏偏想要靠近的獨特魅力。您不喜歡感情中的套路與表演，更重視真實的交流與靈魂的共鳴。您是天生的傾聽者，能讓對方感到被完整理解與接納，而這種深刻的理解感，正是您最強大的磁力所在。',
+    ideal:'最適合您的是「木行」（甲乙日主），水生木，您的智慧與深情能滋養對方的成長，彼此形成美好的相互支持與激勵。「金行」（庚辛）的伴侶也相當適合，金生水，他們的穩定原則讓您漂浮的心有了最好的依附。「火行」（丙丁）與您有強烈的吸引力，水克火帶來熱辣的張力，但長期相處容易出現情感消耗，需要更多磨合。',
+    challenge:'您的感情課題在於「情緒穩定」與「安全感的自我建立」。您情感細膩，有時過度解讀對方行為，在自己腦海中製造出不存在的危機與劇情。另外，對感情高度的理想化傾向，讓現實中的伴侶難以完全企及——學習相信對方、讓自己接地氣，是您愛情路上最重要的修煉功課。',
+    single:'您看似淡然處之，內心卻對感情有著深深的渴望。您需要的不是「桃花旺」，而是「遇到對的人」，因此不必強求數量與頻率。今年感情機緣可能在意想不到的安靜角落出現——書店、展覽、小型聚會、或線上的深夜對談。保持真實的自己，任何形式的偽裝反而會把真正對的人推走。',
+    coupled:'有伴侶的您，今年最需要練習「情緒不帶入溝通」。當您感到不安或受傷時，先給自己一個安靜冷靜的空間，再用平靜的語氣表達感受，效果比情緒化發洩好十倍不止。記得：伴侶不是讀心術師，清晰直接地表達遠比讓對方猜測重要得多。',
+    advice:['相信伴侶，別讓自己的想象力製造出不存在的問題','情緒平靜後再溝通，別在情緒高峰時做重要決定','珍惜眼前真實的愛，不要讓對「完美感情」的幻想困住你','告訴伴侶你在想什麼，建立真正雙向流動的心靈連結'],
+    compatible:'木行（相互滋養）、金行（穩定依靠）',
+    compatEl:['木','金'],
+    cautionEl:['火'],
+  },
+};
+
+/* 桃花星 (Peach Blossom) check */
+const PB_GROUPS=[
+  {group:[2,6,10],pb:3},  // 寅午戌 → 卯桃花
+  {group:[5,9,1], pb:6},  // 巳酉丑 → 午桃花
+  {group:[7,0,4], pb:9},  // 申子辰 → 酉桃花
+  {group:[11,3,7],pb:0},  // 亥卯未 → 子桃花
+];
+function peachBlossom(yearBranch,dayBranch){
+  let pb=-1;
+  for(const {group,pb:p} of PB_GROUPS){
+    if(group.includes(yearBranch)||group.includes(dayBranch)){pb=p;break;}
+  }
+  return pb; // branch index of peach blossom, -1 if not found
+}
+function isMonthPB(yearBranch,dayBranch,monthBranch){
+  return peachBlossom(yearBranch,dayBranch)===monthBranch;
+}
+
+/* Monthly love score */
+function monthLoveScore(dmEl,monthBranch,yearBranch,dayBranch){
+  const mEl=BE[monthBranch];
+  let s=3;
+  if(GEN_CYCLE[mEl]===dmEl) s=5;      // month generates DM → very supportive
+  else if(CON_CYCLE[dmEl]===mEl) s=4; // DM controls month → romance active
+  else if(mEl===dmEl) s=3;
+  else if(GEN_CYCLE[dmEl]===mEl) s=3;
+  else if(CON_CYCLE[mEl]===dmEl) s=2; // month controls DM → pressure
+  if(isMonthPB(yearBranch,dayBranch,monthBranch)) s=Math.min(5,s+1);
+  return s;
+}
+
+/* ════════════════════════════════════════════
+   QUARTERLY FORTUNE DATA (2026 = 丙午年 Fire)
+════════════════════════════════════════════ */
+const Q_DATA={
+  '木':[
+    {name:'春季',icon:'🌸',months:'一月 → 三月',score:'★★★★☆',
+     body:'木旺之春與丙午年火旺相配，木生火的能量讓您創意爆發、機遇連連。事業上展現才華的舞台多，貴人在不經意間出現。感情方面人氣攀升，桃花氣場全開，單身者有不錯的機遇，務必主動把握。唯需注意精力消耗較快，每週至少安排一段深度休息的時間，避免因過度燃燒而提前耗竭。',
+     tags:['創意高峰','桃花旺動','注意節能']},
+    {name:'夏季',icon:'☀️',months:'四月 → 六月',score:'★★★★★',
+     body:'夏季丙午火氣全開，木生火力道達到全年最強！這是您事業、創意、感情的最高峰。適合推動重要項目、表達心聲、進行任何需要勇氣突破的行動。感情上主動出擊效果最佳，這段時間發出的感情信號最有力量。唯需防止高峰期燃燒過度——安排好充足的休息，讓能量的輸出更加持久。',
+     tags:['全年最旺','大膽出擊','感情最佳']},
+    {name:'秋季',icon:'🍂',months:'七月 → 九月',score:'★★★☆☆',
+     body:'秋季金氣漸旺，金克木讓您感到些許阻礙與壓力，事業上可能遭遇評審或挑戰，需保持耐心與冷靜。財務上宜保守，感情上避免因小事鑽牛角尖。這個時期更適合深耕而非開拓——靜心整理、優化既有的成果，為下半年積蓄能量。',
+     tags:['穩守深耕','財務保守','耐心應對']},
+    {name:'冬季',icon:'❄️',months:'十月 → 十二月',score:'★★★★☆',
+     body:'冬季水氣旺，水生木讓您後力充足，運勢在年底悄悄回升。得到貴人或師長的支持是這段時間最大的禮物，適合進修充電、規劃明年計畫。感情方面緣分在安靜處自然滋長，適合深化既有感情或在小圈子中結識真誠的對象。',
+     tags:['貴人出現','進修充電','感情深化']},
+  ],
+  '火':[
+    {name:'春季',icon:'🌸',months:'一月 → 三月',score:'★★★★☆',
+     body:'春季木旺，木生火讓您精力充沛、靈感湧現，是全年最好的暖身開局。事業上新的創意最容易獲得支持，人際關係活躍，貴人出現機率高。感情方面人氣旺盛，單身者有不錯的機遇，把握這段時間多走動多結識人。',
+     tags:['靈感湧現','人際活躍','桃花開放']},
+    {name:'夏季',icon:'☀️',months:'四月 → 六月',score:'★★★★★',
+     body:'夏季與丙午年同屬火行，您進入全年能量最高峰！魅力值爆表、行動力達到頂點，適合做任何需要衝勁的事——升職、表白、談判、創業——這段時間行動勝過千言萬語。但過旺的火氣也可能讓您情緒激動，需特別注意言行，避免衝動造成不可挽回的遺憾。',
+     tags:['能量全開','大膽行動','謹防衝動']},
+    {name:'秋季',icon:'🍂',months:'七月 → 九月',score:'★★★☆☆',
+     body:'秋季金氣漸強，火克金讓您在推動事情時遇到更多摩擦，有人為您設障或提出批評。這時需要調整策略，以柔克剛，用溝通取代對抗。財運上需謹慎，避免因主觀判斷做出錯誤決策，適合聽取他人多方意見後再行動。',
+     tags:['調整策略','以柔克剛','謹慎決策']},
+    {name:'冬季',icon:'❄️',months:'十月 → 十二月',score:'★★★☆☆',
+     body:'冬季水旺，水克火讓您能量有所下降，思緒也比平時複雜。這段時期適合收心，減少高消耗的社交活動，多做內省與充電。感情上容易因思慮過多而猶豫，建議用行動代替糾結，直接問對方的感受勝過自己在腦海中千迴百轉。',
+     tags:['收心充電','向內深省','行動打破糾結']},
+  ],
+  '土':[
+    {name:'春季',icon:'🌸',months:'一月 → 三月',score:'★★★☆☆',
+     body:'春季木旺，木克土讓您感受到外部較多的壓力或管束，可能來自工作要求、家庭責任或人際摩擦。這個時期宜穩守本分，避免輕易做重大決定。感情方面保持平常心，不要讓外部的壓力轉化成對伴侶的情緒宣洩。',
+     tags:['穩守本分','耐心待機','避免衝動']},
+    {name:'夏季',icon:'☀️',months:'四月 → 六月',score:'★★★★★',
+     body:'夏季火旺，火生土讓您獲得強大的支援能量！全年最佳時機——貴人與機遇接踵而來，事業上長期努力終於獲得認可，財運有顯著好轉。感情方面深受對方欣賞，已有伴侶者關係大幅升溫，單身者有遇到長期伴侶的可能。絕對不要錯過這段時間的機會！',
+     tags:['全年最旺','機遇爆發','感情升溫']},
+    {name:'秋季',icon:'🍂',months:'七月 → 九月',score:'★★★★☆',
+     body:'秋季土金同旺，土生金讓您進入穩定輸出的好時期。您的踏實與可靠在這段時間特別受到肯定，適合積累財富、鞏固關係或深化專業技能。感情方面互動溫暖，與伴侶共同規劃未來的計畫在這個時節最容易落地執行。',
+     tags:['穩定輸出','深化技能','共同規劃']},
+    {name:'冬季',icon:'❄️',months:'十月 → 十二月',score:'★★★☆☆',
+     body:'冬季水旺，土克水讓您需要花更多力氣應對複雜局面，可能面臨需要出面處理的麻煩事。這段時期適合用您一貫的穩重來化解問題，不要因暫時的混亂而動搖根本。感情方面加強互信，給伴侶多一點安心感與踏實的承諾。',
+     tags:['以穩應變','出面化解','加強互信']},
+  ],
+  '金':[
+    {name:'春季',icon:'🌸',months:'一月 → 三月',score:'★★★★☆',
+     body:'春季木旺，木行旺盛強化您的財星能量（金克木為財），事業上積極開拓有機會帶來進財，是下手投資與拓展業務的好時機。感情方面異性緣不錯，有機會遇到讓您心動的人，重點是比平時更放開一點，主動一點。',
+     tags:['財星旺動','積極開拓','緣分增加']},
+    {name:'夏季',icon:'☀️',months:'四月 → 六月',score:'★★☆☆☆',
+     body:'夏季火旺，火克金讓您感受到全年最大的壓力——可能來自競爭對手、主管要求，或身體發出的疲憊信號。這個時期需要保存能量，不要強撐硬衝，適當放慢節奏反而能保全長期的競爭力。健康上特別注意心肺與皮膚狀況，避免過度勞累。',
+     tags:['保存能量','放慢節奏','注意健康']},
+    {name:'秋季',icon:'🍂',months:'七月 → 九月',score:'★★★★★',
+     body:'秋季金氣當令，您進入全年最強盛的時期！決斷力、執行力、意志力同時全開，做任何需要毅力和原則的事都能事半功倍。事業上的努力在此刻獲得最大回報，感情上的認真態度也最容易打動對方的心，好好把握這個黃金時期。',
+     tags:['全年最旺','意志全開','豐收時期']},
+    {name:'冬季',icon:'❄️',months:'十月 → 十二月',score:'★★★★☆',
+     body:'冬季水旺，金生水讓您的能量輸出轉向智慧與策略層面。這段時期特別適合學習、規劃、整理思路，為明年的行動奠定紮實基礎。感情上傾聽與理解的能力增強，是深化感情交流、建立更深心靈連結的好時機。',
+     tags:['策略規劃','智慧輸出','深化連結']},
+  ],
+  '水':[
+    {name:'春季',icon:'🌸',months:'一月 → 三月',score:'★★★★☆',
+     body:'春季木旺，水生木讓您的創意與表達能量充沛，適合學習新技能、拓展人際圈，或在需要溝通的事情上主動出擊。感情方面靈感與直覺敏銳，容易感受到對方的心意，也更懂得如何表達自己的情感，是建立新連結的絕佳時機。',
+     tags:['創意表達','直覺敏銳','拓展人脈']},
+    {name:'夏季',icon:'☀️',months:'四月 → 六月',score:'★★☆☆☆',
+     body:'夏季火旺，水克火讓您能量持續輸出，雖主動有力，但消耗也相對較大。事業上行動力強，但容易因過度分散精力而效率不彰。感情方面可能因情緒起伏而引發不必要的衝突，練習「暫停三秒再回應」，能避免很多不必要的誤解。',
+     tags:['主動但節制','情緒管理','避免分散']},
+    {name:'秋季',icon:'🍂',months:'七月 → 九月',score:'★★★★☆',
+     body:'秋季金旺，金生水讓您獲得支援能量，思路特別清晰，判斷力敏銳，直覺準確。這段時期做出的決定往往品質最高，適合進行需要深度思考的工作或學習。感情方面安靜而深沉，和伴侶共享一段深度交流的寧靜時光，效果最好。',
+     tags:['判斷力最強','決策黃金期','深度交流']},
+    {name:'冬季',icon:'❄️',months:'十月 → 十二月',score:'★★★★★',
+     body:'冬季水旺，您進入全年能量最強的時期！洞察力、直覺、智慧同時達到高峰，適合做任何需要策略思考、分析判斷或深度創作的工作。感情方面最能感受到伴侶的情感頻率，深度的心靈交流在這個季節最容易自然實現。',
+     tags:['全年最旺','洞察巔峰','感情共鳴']},
+  ],
+};
+
+/* lucky & caution months for 2026 (丙午 Fire year) per DM element */
+const LUCKY_MONTHS={
+  '木':'二月、五月、六月（木火互生，能量最暢）',
+  '火':'二月、三月、五月（木旺生火，春夏強旺）',
+  '土':'五月、六月、八月（火土相生，最獲支持）',
+  '金':'七月、八月、九月（金氣當令，本命最旺）',
+  '水':'一月、九月、十月（金水相生，清明判斷）',
+};
+const CAUTION_MONTHS={
+  '木':'八月、九月（金旺克木，謹慎保守）',
+  '火':'十一月、十二月（水旺克火，能量下降）',
+  '土':'一月、二月、三月（木旺克土，外壓偏大）',
+  '金':'五月、六月（火旺克金，能量最低）',
+  '水':'四月、五月、六月（火旺水克，消耗較大）',
+};
+
+/* ════════════════════════════════════════════
    MAIN CALCULATION & RENDER
 ════════════════════════════════════════════ */
 function doCalc(){
@@ -668,12 +924,123 @@ function doCalc(){
     <div class="lucky-val">${val}</div>
   </div>`).join('');
 
-  // ── Year Fortune ──
+  // ── Year Fortune (expanded) ──
   const currentY = new Date().getFullYear();
+  const cyp2 = yearPillar(currentY);
+  const cyEl2 = SE[cyp2.stem]; const cyBrEl2 = BE[cyp2.branch];
+  const cyName2 = STEMS[cyp2.stem]+BRANCHES[cyp2.branch];
   document.getElementById('year-fortune-title').textContent=`${currentY} 年 流 年 運 勢`;
   document.getElementById('year-fortune-box').innerHTML=
-    `<div class="year-title">流年論命</div>
+    `<div class="year-title">流年論命 · ${currentY}年 ${cyName2}</div>
      <p>${yearFortuneText(dmStem, elCounts, currentY)}</p>`;
+
+  // ── Render Detailed Love Analysis ──
+  const ld = LOVE_DETAILED[dmEl] || LOVE_DETAILED['土'];
+  const pbBranch = peachBlossom(yp.branch, dp.branch);
+  const hasPB = pbBranch >= 0;
+  const pbStr = hasPB ? `您的命盤含有桃花星（${BRANCHES[pbBranch]}），天生散發魅力，感情緣份較旺！` : '您的命盤感情緣份較為含蓄，需靠後天主動經營。';
+  // Monthly love chart (approximate month branches for current year)
+  const MONTH_BRANCHES_2026 = [1,2,3,4,5,6,7,8,9,10,11,0];
+  const MONTH_NAMES = ['一月','二月','三月','四月','五月','六月','七月','八月','九月','十月','十一月','十二月'];
+  const monthChartHTML = `<div class="month-chart">${MONTH_NAMES.map((mn,i)=>{
+    const mb = MONTH_BRANCHES_2026[i];
+    const sc = monthLoveScore(dmEl, mb, yp.branch, dp.branch);
+    const isPB = isMonthPB(yp.branch, dp.branch, mb);
+    const pct = sc/5*100;
+    const barColor = sc>=4?'#c9a84c':sc>=3?'#e67e22':'#5dade2';
+    const stars = '★'.repeat(sc)+'☆'.repeat(5-sc);
+    return `<div class="month-row">
+      <span class="month-name">${mn}</span>
+      <div class="month-bar-wrap"><div class="month-bar-fill" style="width:0%;background:${barColor}" data-pct="${pct}"></div></div>
+      <span class="month-stars-txt">${stars}</span>
+      ${isPB?`<span class="month-pb-tag">桃花月</span>`:''}
+    </div>`;
+  }).join('')}</div>`;
+
+  document.getElementById('love-detail-box').innerHTML=`
+    <div class="love-type-header">
+      <div class="love-type-name">${ld.type}</div>
+      <div class="love-type-sub">✦ 日主${DM_DATA[dmStem].name} · ${pbStr} ✦</div>
+    </div>
+    <div class="love-2col">
+      <div class="love-block">
+        <div class="love-block-title">感情個性</div>
+        <div class="love-block-body">${ld.nature}</div>
+      </div>
+      <div class="love-block">
+        <div class="love-block-title">愛情風格</div>
+        <div class="love-block-body">${ld.style}</div>
+      </div>
+    </div>
+    <div class="love-2col">
+      <div class="love-block">
+        <div class="love-block-title">理想伴侶特質</div>
+        <div class="love-block-body">${ld.ideal}</div>
+        <div class="compat-row">
+          <span class="compat-label">相容：</span>
+          ${ld.compatEl.map(e=>`<span class="compat-tag" style="color:${EL_COLORS_CSS[e]};border-color:${EL_COLORS_CSS[e]};background:${EL_STYLE[e].bg}">${e}行</span>`).join('')}
+          <span class="compat-label" style="margin-left:8px">需磨合：</span>
+          ${ld.cautionEl.map(e=>`<span class="compat-tag" style="color:var(--text-dim);border-color:rgba(138,122,90,.3)">${e}行</span>`).join('')}
+        </div>
+      </div>
+      <div class="love-block">
+        <div class="love-block-title">感情挑戰</div>
+        <div class="love-block-body">${ld.challenge}</div>
+      </div>
+    </div>
+    <div class="love-tab-row">
+      <div class="love-tab">
+        <div class="love-tab-label">💍 單身者分析</div>
+        <div class="love-tab-body">${ld.single}</div>
+      </div>
+      <div class="love-tab">
+        <div class="love-tab-label">💑 已有伴侶者</div>
+        <div class="love-tab-body">${ld.coupled}</div>
+      </div>
+    </div>
+    <div class="love-fullrow">
+      <div class="love-fullrow-title">感情建議 ✦ 四大心法</div>
+      <ul class="advice-list">${ld.advice.map(a=>`<li>${a}</li>`).join('')}</ul>
+    </div>
+    <div class="love-fullrow">
+      <div class="love-fullrow-title">${currentY} 年 月份感情走勢</div>
+      ${monthChartHTML}
+    </div>`;
+
+  // Animate month bars after a short delay
+  setTimeout(()=>{
+    document.querySelectorAll('.month-bar-fill').forEach(b=>{
+      b.style.width = b.dataset.pct+'%';
+    });
+  },300);
+
+  // ── Render Quarterly Fortune ──
+  const qYear = STEMS[cyp2.stem]+BRANCHES[cyp2.branch]+'年';
+  document.getElementById('q-title').textContent=`${currentY} 年 流 年 四 季 詳 析`;
+  const qData = Q_DATA[dmEl] || Q_DATA['土'];
+  document.getElementById('quarterly-box').innerHTML=`
+    <div class="q-overview">
+      <strong style="color:var(--gold)">${currentY}年（${qYear}）整體走勢：</strong>
+      ${yearFortuneText(dmStem, elCounts, currentY).split('。').slice(0,2).join('。')}。
+      以下依春夏秋冬四季，逐季解析您的運勢重點。
+    </div>
+    <div class="q-grid">${qData.map(q=>`<div class="q-card">
+      <div class="q-season">${q.icon} ${q.name}</div>
+      <div class="q-months">${q.months}</div>
+      <div class="q-score">${q.score}</div>
+      <div class="q-body">${q.body}</div>
+      <div class="q-tags">${q.tags.map(t=>`<span class="q-tag">${t}</span>`).join('')}</div>
+    </div>`).join('')}</div>
+    <div class="lucky-caution-row">
+      <div class="lc-item">
+        <div class="lc-label">✦ 幸運月份</div>
+        <div class="lc-val">${LUCKY_MONTHS[dmEl]||'二月、六月、十月'}</div>
+      </div>
+      <div class="lc-item">
+        <div class="lc-label">⚠ 需謹慎月份</div>
+        <div class="lc-val">${CAUTION_MONTHS[dmEl]||'七月、十一月'}</div>
+      </div>
+    </div>`;
 
   // ── Fortune Cards ──
   const fIdx = (y+mo+d)%2; // pick variant based on birth data
