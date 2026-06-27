@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>四柱八字 · 命理神算</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --gold:#c9a84c;--gold-light:#f0d080;--gold-dim:rgba(201,168,76,0.3);
+  --red:#c0392b;--dark:#08080f;--dark2:#10101e;--dark3:#161628;
+  --text:#e8d5a3;--text-dim:#8a7a5a;
+  --wood:#27ae60;--fire:#e74c3c;--earth:#e67e22;--metal:#f1c40f;--water:#3498db;
+}
+body{
+  font-family:'Noto Serif TC','SimSun','STSong',serif;
+  background:var(--dark);color:var(--text);min-height:100vh;overflow-x:hidden;
+}
+canvas#bg{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none}
+
+.wrap{position:relative;z-index:1;max-width:960px;margin:0 auto;padding:0 20px 60px}
+
+/* ── Header ── */
+header{text-align:center;padding:60px 20px 40px}
+.bagua{font-size:22px;letter-spacing:10px;color:var(--gold);opacity:.6;margin-bottom:16px}
+h1{font-size:clamp(2.2rem,6vw,3.8rem);color:var(--gold);letter-spacing:8px;
+   text-shadow:0 0 40px rgba(201,168,76,.45);margin-bottom:10px}
+.subtitle{font-size:.9rem;color:var(--text-dim);letter-spacing:5px;margin-bottom:32px}
+.divider{width:220px;height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent);margin:16px auto}
+
+/* ── Intro ── */
+.intro{
+  background:linear-gradient(135deg,rgba(22,22,40,.9),rgba(16,16,30,.9));
+  border:1px solid var(--gold-dim);border-radius:12px;padding:24px 28px;margin-bottom:24px;
+}
+.intro p{font-size:.88rem;line-height:2;color:rgba(232,213,163,.8);margin-bottom:8px}
+.intro p:last-child{margin-bottom:0}
+
+/* ── Form ── */
+.form-card{
+  background:linear-gradient(135deg,rgba(22,22,40,.95),rgba(16,16,30,.95));
+  border:1px solid var(--gold-dim);border-radius:14px;padding:36px;margin-bottom:28px;
+  box-shadow:0 0 50px rgba(0,0,0,.5),inset 0 1px 0 rgba(201,168,76,.08);
+}
+.form-title{text-align:center;color:var(--gold);font-size:1.15rem;letter-spacing:5px;margin-bottom:28px}
+.form-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:18px;margin-bottom:24px}
+.fg label{display:block;color:var(--gold);font-size:.78rem;letter-spacing:2px;margin-bottom:7px}
+.fg input,.fg select{
+  width:100%;background:rgba(255,255,255,.04);border:1px solid var(--gold-dim);
+  border-radius:7px;padding:12px 14px;color:var(--text);font-size:.95rem;
+  font-family:inherit;transition:border-color .25s,box-shadow .25s;
+}
+.fg input:focus,.fg select:focus{
+  outline:none;border-color:var(--gold);box-shadow:0 0 0 2px rgba(201,168,76,.12)
+}
+.fg select option{background:var(--dark3);color:var(--text)}
+.btn{
+  display:block;width:100%;
+  background:linear-gradient(135deg,#7a5a10,var(--gold),#7a5a10);
+  border:none;border-radius:9px;padding:15px;font-size:1.05rem;
+  color:#080808;font-weight:900;letter-spacing:6px;cursor:pointer;
+  font-family:inherit;transition:transform .25s,box-shadow .25s;
+  box-shadow:0 4px 20px rgba(201,168,76,.3);
+}
+.btn:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(201,168,76,.5)}
+.btn:active{transform:translateY(0)}
+
+/* ── Results ── */
+#results{display:none}
+#results.show{display:block;animation:fadeUp .7s ease both}
+@keyframes fadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+
+.section{
+  background:linear-gradient(135deg,rgba(22,22,40,.95),rgba(16,16,30,.95));
+  border:1px solid var(--gold-dim);border-radius:14px;padding:28px;margin-bottom:22px;
+}
+.sec-title{
+  text-align:center;color:var(--gold);font-size:1.05rem;letter-spacing:6px;
+  margin-bottom:22px;padding-bottom:14px;
+  border-bottom:1px solid var(--gold-dim);
+}
+
+/* ── Pillars ── */
+.pillars{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.pillar{
+  background:rgba(8,8,20,.5);border:1px solid var(--gold-dim);border-radius:10px;
+  padding:18px 10px;text-align:center;transition:transform .3s;
+}
+.pillar:hover{transform:translateY(-3px)}
+.p-label{font-size:.72rem;color:var(--gold);letter-spacing:2px;margin-bottom:14px}
+.p-stem{font-size:2.6rem;font-weight:700;line-height:1;margin-bottom:2px}
+.p-branch{font-size:2.6rem;font-weight:700;line-height:1;margin-bottom:12px}
+.p-tag{font-size:.7rem;padding:3px 9px;border-radius:12px;display:inline-block;margin:2px}
+.p-sub{font-size:.68rem;color:var(--text-dim);margin-top:7px;line-height:1.6}
+
+/* ── Five Elements ── */
+.el-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:16px}
+.el-item{text-align:center}
+.el-circle{
+  width:58px;height:58px;border-radius:50%;margin:0 auto 8px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.5rem;font-weight:700;border:2px solid;
+  box-shadow:0 0 16px rgba(0,0,0,.4);
+}
+.el-count{font-size:1.3rem;font-weight:700;margin-bottom:2px}
+.el-name{font-size:.7rem;color:var(--text-dim);letter-spacing:1px;margin-bottom:6px}
+.el-bar-bg{background:rgba(255,255,255,.07);border-radius:4px;height:5px;overflow:hidden}
+.el-bar{height:100%;border-radius:4px;transition:width 1.1s ease .3s}
+
+/* ── Destiny ── */
+.destiny-box{text-align:center;padding:10px 0 20px}
+.dest-type{font-size:1.7rem;color:var(--gold);letter-spacing:4px;margin-bottom:12px}
+.dest-yy{font-size:.85rem;color:var(--text-dim);letter-spacing:2px;margin-bottom:16px}
+.dest-desc{font-size:.9rem;line-height:2;color:rgba(232,213,163,.85);text-align:left;max-width:680px;margin:0 auto}
+
+.traits{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:16px}
+.trait-tag{
+  font-size:.78rem;padding:5px 14px;border-radius:20px;letter-spacing:1px;
+  border:1px solid;
+}
+
+/* ── Lucky ── */
+.lucky-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:16px}
+.lucky-item{
+  background:rgba(255,255,255,.03);border:1px solid rgba(201,168,76,.12);
+  border-radius:9px;padding:14px;text-align:center;
+}
+.lucky-label{font-size:.68rem;color:var(--text-dim);letter-spacing:2px;margin-bottom:7px}
+.lucky-val{font-size:1rem;color:var(--gold);font-weight:700}
+
+/* ── Fortune Cards ── */
+.fortune-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.fc{
+  background:rgba(8,8,20,.5);border:1px solid var(--gold-dim);
+  border-radius:12px;padding:22px;
+}
+.fc-title{color:var(--gold);font-size:.95rem;letter-spacing:3px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.fc-icon{font-size:1.3rem}
+.fc-body{font-size:.85rem;line-height:2;color:rgba(232,213,163,.8)}
+.fc-stars{color:var(--gold);font-size:.75rem;margin-bottom:8px;letter-spacing:2px}
+
+/* ── Year Fortune ── */
+.year-box{
+  border-left:3px solid var(--gold);padding-left:18px;
+  font-size:.88rem;line-height:2.1;color:rgba(232,213,163,.85);
+}
+.year-title{color:var(--gold);font-size:1rem;letter-spacing:3px;margin-bottom:10px}
+
+/* ── Footer ── */
+footer{
+  text-align:center;font-size:.72rem;color:var(--text-dim);
+  padding:28px 20px;border-top:1px solid rgba(201,168,76,.12);margin-top:30px;
+}
+
+/* ── Responsive ── */
+@media(max-width:580px){
+  .pillars{grid-template-columns:repeat(2,1fr)}
+  .p-stem,.p-branch{font-size:2rem}
+  h1{letter-spacing:4px}
+  .form-card{padding:22px 18px}
+}
+@media(max-width:400px){
+  .el-grid{grid-template-columns:repeat(3,1fr)}
+  .el-circle{width:48px;height:48px;font-size:1.2rem}
+}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div class="wrap">
+
+<!-- Header -->
+<header>
+  <div class="bagua">☰ ☱ ☲ ☳ ☴ ☵ ☶ ☷</div>
+  <h1>四柱八字</h1>
+  <div class="divider"></div>
+  <p class="subtitle">사주팔자 · 命理神算 · 探索人生軌跡</p>
+</header>
+
+<!-- Intro -->
+<div class="intro">
+  <p>四柱八字（사주팔자）是東亞傳統命理學，依據出生的「年、月、日、時」四柱，各取天干、地支組成八個漢字，形成命盤。透過五行（木火土金水）的生剋制化關係，分析人的命格與運勢。</p>
+  <p>本工具依照傳統命理原理計算，提供娛樂性質的命盤分析。月柱以節氣為界，日柱以甲子紀日推算，如需精確論命，請諮詢專業命理師。</p>
+</div>
+
+<!-- Form -->
+<div class="form-card">
+  <div class="form-title">✦ 輸入您的出生資訊 ✦</div>
+  <div class="form-row">
+    <div class="fg">
+      <label>出生年份</label>
+      <input type="number" id="inp-year" placeholder="例：1990" min="1900" max="2099">
+    </div>
+    <div class="fg">
+      <label>出生月份</label>
+      <select id="inp-month">
+        <option value="">— 請選擇 —</option>
+        <option value="1">一月</option><option value="2">二月</option>
+        <option value="3">三月</option><option value="4">四月</option>
+        <option value="5">五月</option><option value="6">六月</option>
+        <option value="7">七月</option><option value="8">八月</option>
+        <option value="9">九月</option><option value="10">十月</option>
+        <option value="11">十一月</option><option value="12">十二月</option>
+      </select>
+    </div>
+    <div class="fg">
+      <label>出生日期</label>
+      <input type="number" id="inp-day" placeholder="例：15" min="1" max="31">
+    </div>
+    <div class="fg">
+      <label>出生時辰（時）</label>
+      <select id="inp-hour">
+        <option value="">— 請選擇 —</option>
+        <option value="unknown">不知道出生時辰</option>
+        <option value="23">子時 23:00–00:59</option>
+        <option value="1">丑時 01:00–02:59</option>
+        <option value="3">寅時 03:00–04:59</option>
+        <option value="5">卯時 05:00–06:59</option>
+        <option value="7">辰時 07:00–08:59</option>
+        <option value="9">巳時 09:00–10:59</option>
+        <option value="11">午時 11:00–12:59</option>
+        <option value="13">未時 13:00–14:59</option>
+        <option value="15">申時 15:00–16:59</option>
+        <option value="17">酉時 17:00–18:59</option>
+        <option value="19">戌時 19:00–20:59</option>
+        <option value="21">亥時 21:00–22:59</option>
+      </select>
+    </div>
+  </div>
+  <button class="btn" onclick="doCalc()">✦ 起 命 盤 ✦</button>
+</div>
+
+<!-- Results (hidden until calc) -->
+<div id="results">
+
+  <!-- Four Pillars -->
+  <div class="section" id="sec-pillars">
+    <div class="sec-title">☰ 命 盤 四 柱 八 字 ☰</div>
+    <div class="pillars" id="pillars-grid"></div>
+  </div>
+
+  <!-- Five Elements -->
+  <div class="section">
+    <div class="sec-title">五 行 分 析</div>
+    <div class="el-grid" id="el-grid"></div>
+  </div>
+
+  <!-- Destiny & Personality -->
+  <div class="section">
+    <div class="sec-title">命 格 解 析</div>
+    <div class="destiny-box" id="destiny-box"></div>
+  </div>
+
+  <!-- Lucky -->
+  <div class="section">
+    <div class="sec-title">吉 祥 資 訊</div>
+    <div class="lucky-grid" id="lucky-grid"></div>
+  </div>
+
+  <!-- Year Fortune -->
+  <div class="section">
+    <div class="sec-title" id="year-fortune-title">今 年 流 年 運 勢</div>
+    <div class="year-box" id="year-fortune-box"></div>
+  </div>
+
+  <!-- Fortune Cards -->
+  <div class="section">
+    <div class="sec-title">各 宮 詳 析</div>
+    <div class="fortune-grid" id="fortune-grid"></div>
+  </div>
+
+</div><!-- /results -->
+
+<footer>
+  ✦ 本網站以傳統四柱八字命理學為基礎，僅供娛樂參考，不代表個人命運之絕對預測 ✦<br>
+  四柱八字 · 사주팔자 · BaZi · 八字命理 · 版權所有 © 2025
+</footer>
+</div><!-- /wrap -->
+
+<script>
+/* ════════════════════════════════════════════
+   STARFIELD BACKGROUND
+════════════════════════════════════════════ */
+(function(){
+  const c=document.getElementById('bg');
+  const ctx=c.getContext('2d');
+  let stars=[];
+  function resize(){c.width=innerWidth;c.height=innerHeight}
+  function init(){
+    resize();stars=[];
+    for(let i=0;i<200;i++)stars.push({
+      x:Math.random()*c.width,y:Math.random()*c.height,
+      r:Math.random()*1.4+.3,a:Math.random(),da:(Math.random()-.5)*.005
+    });
+  }
+  function frame(){
+    ctx.clearRect(0,0,c.width,c.height);
+    ctx.fillStyle='#08080f';ctx.fillRect(0,0,c.width,c.height);
+    stars.forEach(s=>{
+      s.a+=s.da;if(s.a<=0||s.a>=1)s.da*=-1;
+      ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,2*Math.PI);
+      ctx.fillStyle=`rgba(201,168,76,${s.a*.7})`;ctx.fill();
+    });
+    requestAnimationFrame(frame);
+  }
+  window.addEventListener('resize',init);
+  init();frame();
+})();
+
+/* ════════════════════════════════════════════
+   CONSTANTS
+════════════════════════════════════════════ */
+const STEMS   = ['甲','乙','丙','丁','戊','己','庚','辛','壬','癸'];
+const BRANCHES= ['子','丑','寅','卯','辰','巳','午','未','申','酉','戌','亥'];
+const ANIMALS = ['鼠','牛','虎','兔','龍','蛇','馬','羊','猴','雞','狗','豬'];
+const SE      = ['木','木','火','火','土','土','金','金','水','水']; // stem element
+const BE      = ['水','土','木','木','土','火','火','土','金','金','土','水']; // branch element
+const SYY     = ['陽','陰','陽','陰','陽','陰','陽','陰','陽','陰']; // stem yin-yang
+
+const EL_STYLE={
+  '木':{color:'#2ecc71',bg:'rgba(46,204,113,.15)',border:'#27ae60'},
+  '火':{color:'#e74c3c',bg:'rgba(231,76,60,.15)', border:'#c0392b'},
+  '土':{color:'#e67e22',bg:'rgba(230,126,34,.15)',border:'#d35400'},
+  '金':{color:'#f1c40f',bg:'rgba(241,196,15,.15)',border:'#d4ac0d'},
+  '水':{color:'#5dade2',bg:'rgba(93,173,226,.15)',border:'#2980b9'},
+};
+const EL_COLORS_CSS={
+  '木':'#2ecc71','火':'#e74c3c','土':'#e67e22','金':'#f1c40f','水':'#5dade2'
+};
+const EL_LUCKY_COLOR={'木':'綠、青','火':'紅、紫','土':'黃、棕','金':'白、銀','水':'黑、藍'};
+const EL_LUCKY_NUM  ={'木':'3、8','火':'2、7','土':'5、10','金':'4、9','水':'1、6'};
+const EL_LUCKY_DIR  ={'木':'東、東南','火':'南','土':'中央','金':'西、西北','水':'北'};
+const EL_ORGAN      ={'木':'肝、膽、眼','火':'心、小腸、血壓','土':'脾、胃、消化','金':'肺、大腸、皮膚','水':'腎、膀胱、骨骼'};
+
+// Five element generation cycle: index → generates next
+const GEN_CYCLE = {'木':'火','火':'土','土':'金','金':'水','水':'木'};
+const CON_CYCLE = {'木':'土','火':'金','土':'水','金':'木','水':'火'}; // 克
+
+/* ════════════════════════════════════════════
+   JULIAN DAY NUMBER
+════════════════════════════════════════════ */
+function jdn(y,m,d){
+  if(m<=2){y--;m+=12;}
+  const A=Math.floor(y/100);
+  const B=2-A+Math.floor(A/4);
+  return Math.floor(365.25*(y+4716))+Math.floor(30.6001*(m+1))+d+B-1524;
+}
+
+/* ════════════════════════════════════════════
+   FOUR PILLARS CALCULATION
+════════════════════════════════════════════ */
+// Year Pillar: Heavenly Stem & Earthly Branch
+function yearPillar(y){
+  return{stem:((y-4)%10+10)%10, branch:((y-4)%12+12)%12};
+}
+
+// Month Pillar
+// Solar-term approximate days (when the new branch starts)
+// Jan:6(小寒→丑), Feb:4(立春→寅), Mar:6(驚蟄→卯), Apr:5(清明→辰),
+// May:6(立夏→巳), Jun:6(芒種→午), Jul:7(小暑→未), Aug:7(立秋→申),
+// Sep:8(白露→酉), Oct:8(寒露→戌), Nov:7(立冬→亥), Dec:7(大雪→子)
+const TERM_DAY   = [6,4,6,5,6,6,7,7,8,8,7,7];
+const BRANCH_AFT = [1,2,3,4,5,6,7,8,9,10,11,0]; // after term: 丑寅卯...子
+const BRANCH_BEF = [0,1,2,3,4,5,6,7,8,9,10,11]; // before term: 子丑寅...亥
+
+function monthPillar(yearStem,mo,day){
+  const bra = day>=TERM_DAY[mo-1] ? BRANCH_AFT[mo-1] : BRANCH_BEF[mo-1];
+  // 五虎遁年起月法: 寅月(branch 2) stem offset = yearStem%5*2+2
+  const startStem = (yearStem%5*2+2)%10;
+  const stem = (startStem + ((bra-2+12)%12))%10;
+  return{stem,branch:bra};
+}
+
+// Day Pillar: calibrated Jan 1 1900 = 甲戌 (sexagenary index 10)
+// JDN(1900,1,1)=2415021; index=(jdn-2415021+10)%60
+function dayPillar(y,mo,d){
+  const j=jdn(y,mo,d);
+  const idx=((j-2415021+10)%60+60)%60;
+  return{stem:idx%10, branch:idx%12};
+}
+
+// Hour Pillar: 五鼠遁日起時法
+function hourBranch(h){
+  if(h===23||h===0)return 0; // 子時
+  return Math.floor((h+1)/2);
+}
+function hourPillar(dayStem,h){
+  const bra=hourBranch(h);
+  const startStem=(dayStem%5*2)%10;
+  return{stem:(startStem+bra)%10, branch:bra};
+}
+
+/* ════════════════════════════════════════════
+   FIVE ELEMENT COUNT  (8 chars total)
+════════════════════════════════════════════ */
+function countElements(pillars){
+  const c={'木':0,'火':0,'土':0,'金':0,'水':0};
+  pillars.forEach(p=>{c[SE[p.stem]]++;c[BE[p.branch]]++;});
+  return c;
+}
+
+/* ════════════════════════════════════════════
+   DAY MASTER ANALYSIS DATA
+════════════════════════════════════════════ */
+const DM_DATA=[
+  // 甲
+  {name:'甲木',title:'棟梁之格',
+   desc:'您如巍峨大樹，天生具有高遠理想與開拓精神，正直剛毅，不畏艱難。富有領導魅力，能帶動周圍之人共同向前。待人真誠，言出必行，是值得信賴的夥伴。',
+   traits:['理想遠大','正直剛毅','開拓精神','領導力強'],neg:['偶爾固執','不易妥協']},
+  // 乙
+  {name:'乙木',title:'蘭草之格',
+   desc:'您如山谷幽蘭，外柔內剛，善於在逆境中尋得生機。人際關係圓融，溫柔細膩，善解人意。雖看似柔弱，實則擁有驚人的適應力與韌性，能在各種環境中茁壯成長。',
+   traits:['溫柔細膩','人際圓融','適應力強','韌性十足'],neg:['偶爾優柔','較依賴環境']},
+  // 丙
+  {name:'丙火',title:'太陽之格',
+   desc:'您如耀眼太陽，熱情開朗，光芒四射，天生具有感染力與領導魅力。慷慨大方，喜與人分享，能夠點燃他人心中的熱忱。行事果斷，勇於挑戰，充滿正能量。',
+   traits:['熱情開朗','魅力十足','慷慨大方','行事果斷'],neg:['偶爾衝動','易心急']},
+  // 丁
+  {name:'丁火',title:'燭光之格',
+   desc:'您如溫暖燭光，細膩溫柔，情感豐富，富有藝術氣息。對人充滿關懷，心思敏銳，能洞察他人情感。在創意、藝術或文化方面具有天賦，能創作出觸動人心的作品。',
+   traits:['細膩溫柔','藝術天賦','情感豐富','洞察敏銳'],neg:['情緒起伏','過度敏感']},
+  // 戊
+  {name:'戊土',title:'山嶽之格',
+   desc:'您如巍峨高山，穩重厚實，是眾人依靠的力量。為人保守穩健，重視信用，言而有信。雖行事較為謹慎，但勝在踏實可靠，具有長遠的規劃能力，是天生的基石型人物。',
+   traits:['穩重可靠','言而有信','長遠規劃','責任感強'],neg:['行動稍慢','過於謹慎']},
+  // 己
+  {name:'己土',title:'田園之格',
+   desc:'您如肥沃良田，包容萬物，親切和藹，善於照顧他人需求。具有強烈的服務精神與責任感，勤勞樸實，默默付出。擅長將抽象想法轉化為具體成果，是優秀的執行者。',
+   traits:['包容溫和','勤勞樸實','服務精神','執行力佳'],neg:['容易遷就','缺乏自信']},
+  // 庚
+  {name:'庚金',title:'剛鐵之格',
+   desc:'您如百煉精鋼，意志堅定，果斷有力，具有強烈的執行力與競爭心。為人直率坦誠，說話有力，不喜拐彎抹角。具有較強的原則性，追求卓越，不甘於平凡。',
+   traits:['意志堅定','直率坦誠','執行力強','追求卓越'],neg:['偶爾固執','較不妥協']},
+  // 辛
+  {name:'辛金',title:'珠玉之格',
+   desc:'您如璀璨珠玉，精緻優雅，具有超凡的審美眼光。精益求精，注重細節，追求完美。在藝術、設計、精密技術或文化領域具有特殊天賦，能創造出精緻而有品質的成果。',
+   traits:['精益求精','審美高超','細心謹慎','品味出眾'],neg:['完美主義','偶爾挑剔']},
+  // 壬
+  {name:'壬水',title:'江海之格',
+   desc:'您如浩瀚大海，思維廣博，智慧靈活，具有強烈的好奇心與探索精神。善於整合資訊，機智過人，適應力極強。在研究、創新或需要廣博知識的領域中能發揮最大潛力。',
+   traits:['聰明機智','思維廣博','好奇探索','適應力強'],neg:['偶爾心散','定力不足']},
+  // 癸
+  {name:'癸水',title:'靈泉之格',
+   desc:'您如山間靈泉，直覺敏銳，具有深刻的洞察力與神秘氣質。情感細膩，內心世界豐富，善於在靜默中積蓄力量。適合從事需要深度思考、隱密策劃或靈感創作的工作。',
+   traits:['直覺敏銳','洞察深刻','情感細膩','內心豐富'],neg:['過於內斂','需培養自信']},
+];
+
+/* ════════════════════════════════════════════
+   FORTUNE TEXT GENERATORS
+════════════════════════════════════════════ */
+// Determine the "useful god" (用神) - the favorable element
+function usefulGod(dmStem, elCounts){
+  const dmEl = SE[dmStem];
+  const total = Object.values(elCounts).reduce((a,b)=>a+b,0);
+  const dmCount = elCounts[dmEl];
+  // Count elements that support the day master (same element + generates DM)
+  const genDM = Object.keys(GEN_CYCLE).find(k=>GEN_CYCLE[k]===dmEl)||'';
+  const supportCount = dmCount + (elCounts[genDM]||0);
+
+  if(supportCount >= total/2){
+    // Day master is strong → use 洩(generation) or 克(conquest) to weaken
+    return CON_CYCLE[dmEl]; // the element that controls DM
+  } else {
+    // Day master is weak → use generation or same element to strengthen
+    return genDM || dmEl;
+  }
+}
+
+// Element relationship description to current year
+function elRelation(dayEl, yearEl){
+  if(dayEl===yearEl) return '比劫（同類）';
+  if(GEN_CYCLE[yearEl]===dayEl) return '印星（生我）';
+  if(GEN_CYCLE[dayEl]===yearEl) return '食傷（我生）';
+  if(CON_CYCLE[yearEl]===dayEl) return '官殺（克我）';
+  if(CON_CYCLE[dayEl]===yearEl) return '財星（我克）';
+  return '五行相涉';
+}
+
+const CAREER_TEXT={
+  '木':['適合創業、管理、教育、文化創意等需要主動開拓的領域。您的決斷力與領導力將成為最大優勢，今年有望突破現狀，開創新局。','擅長規劃與組織，在團隊中往往擔任核心角色。建議充分發揮主導能力，積極爭取重要項目，能有顯著成果。'],
+  '火':['適合行銷、公關、演藝、銷售、管理等需要人際互動與表現的職業。您的熱情與魅力是職場最強武器，今年在人際關係上多用心，貴人運旺。','在需要創新和展現個人風格的行業中特別突出。今年宜主動出擊，展示自身才能，適合轉職或升遷的好時機。'],
+  '土':['適合金融、地產、農業、行政、管理等需要穩健執行的職業。您的可靠性與責任感深受主管器重，今年穩步向前，避免輕易冒進。','具有優秀的執行力和組織能力，適合擔任中層管理職。今年專注本業深耕，積累實力，將有豐厚回報。'],
+  '金':['適合法律、軍警、工程、財務、精密技術等需要嚴謹執行的領域。今年事業運穩健，堅持原則，將在專業領域獲得認可。','決斷力強，做事有條不紊，適合從事需要精確判斷的工作。今年可爭取晉升機會，或在專業技能上精進，將有所突破。'],
+  '水':['適合學術、研究、IT、傳媒、諮詢等需要廣博知識與靈活思維的領域。今年思路活躍，創意湧現，適合開展新項目或學習新技能。','聰明靈活，善於分析和整合信息，在知識型工作中最能發揮潛力。今年人脈拓展效果佳，適合透過交流學習開拓機會。'],
+};
+const WEALTH_TEXT={
+  '木':['財運來自行動力，今年主動出擊可帶來新收入來源。適合投資實體事業或文化創意產業，謹慎評估後可適度擴大投資。避免因衝動而忽略風險管控。','今年偏財運中等，正財穩定。擅長透過自身努力積累財富，投資方面宜保守為主，不宜追逐短期暴利。'],
+  '火':['財運熱絡，人脈帶財，今年透過社交和人際關係有機會拓展財源。適合從事與消費、娛樂相關的投資，但需注意衝動消費習慣。','今年收入來源多元，但花費也相對較多。建議養成理財習慣，適度投資穩健型產品，讓錢滾錢。'],
+  '土':['財運平穩紮實，適合長期穩健投資，如房地產、定存或指數型基金。今年不宜冒險投機，按部就班積累是最佳策略。','具有良好的理財意識，善於積少成多。今年財運偏向正財，透過本業努力可有穩定增長，適合增加儲蓄比例。'],
+  '金':['今年財運整體不錯，謹慎規劃可有可觀進帳。適合投資貴金屬、科技或金融相關產業。做任何財務決策前多方研究，避免輕信他人建議。','偏財運有亮點，但需防範詐騙或不實投資。正財方面表現穩定，依靠專業技能創造的收入最為可靠。'],
+  '水':['財運流動性強，今年財來財去，需特別注意節流。適合靈活型投資，但需設定停損點。人際理財機遇多，但也要分清友情與金錢。','今年財富主要來自知識和資訊差，適合涉足新興行業或知識型投資。建議建立穩固的財務基礎，再謀求增值機會。'],
+};
+const LOVE_TEXT={
+  '木':['感情方面，您重視精神層次的契合，今年有機會遇到理念相近的對象。單身者：主動表達心意，不要等待，適時出擊。已婚或穩定交往者：多安排共同成長的活動，增進感情深度。','今年感情運中等，易因過於主觀影響關係。學習傾聽對方，給予更多空間，感情將更加穩固。'],
+  '火':['感情運旺盛，魅力爆棚，吸引力十足！單身者今年極有機會遇到心儀對象，社交場合中尤其容易擦出火花。已婚或固定交往者：點燃激情，多製造浪漫驚喜，感情更甜蜜。','今年桃花運旺，但需分清真情假意。感情方面不宜過於衝動，深入了解對方後再做承諾，才能建立穩固的關係。'],
+  '土':['感情方面踏實穩重，重視長期承諾與安全感。單身者：透過日常相處建立感情，細水長流型最適合您。已婚或固定交往者：今年感情穩定，共同規劃未來能加深彼此連結。','今年感情運平穩，雖無大起大落，但感情基礎紮實。建議在平淡中用心經營，小細節的關懷往往能讓感情加溫。'],
+  '金':['今年感情運需要主動突破，您對感情較為理性，有時顯得冷漠。單身者：試著放開心扉，展現溫柔的一面，感情自然到來。已婚或固定交往者：多表達關愛，用行動代替言語，感情將更加深厚。','感情方面您有較高標準，今年遇到真正合適的對象需要時間。不必操之過急，緣分自然在適當時機出現。'],
+  '水':['感情方面直覺敏銳，善解人意，容易讓對方感到被理解和重視。今年感情流動性強，可能有多個機緣出現。單身者：保持開放的心態，感情機遇在不經意間到來。已婚或固定交往者：深化情感交流，共享精神世界。','今年感情運有波動，情緒起伏可能影響關係。學習穩定自身情緒，理性與感性並重，感情將更加和諧。'],
+};
+const HEALTH_TEXT={
+  '木':['需特別關注肝膽系統與眼部健康，避免過度疲勞。今年工作壓力偏大，建議規律作息，多攝取綠色蔬菜，適度運動（如瑜伽、健走）有助紓壓。','肝火偏旺，注意情緒管理，避免憤怒與壓抑。建議學習冥想或太極，每週至少運動三次，保持身心平衡。'],
+  '火':['心血管系統與血壓需多加留意，避免過度興奮或情緒激動。夏季特別注意防暑與補水。建議規律有氧運動，保持作息穩定，避免熬夜。','今年精力充沛但消耗也大，注意不要過度透支。心臟、血液循環方面定期檢查，飲食宜清淡，少吃油炸食物。'],
+  '土':['消化系統與脾胃功能需要關注，飲食宜規律，避免暴飲暴食。今年容易因思慮過重影響腸胃，放鬆心情是最好的健康良方。','脾胃較為敏感，注意飲食衛生與規律，少吃生冷刺激食物。適度運動有助提升代謝，保持體重在健康範圍。'],
+  '金':['肺部與呼吸系統需要保養，遠離煙霧與空氣污染。今年可能容易有皮膚問題，注意保濕與防曬。規律的深呼吸練習或游泳對您很有益處。','今年容易感受到季節性過敏，加強免疫力是關鍵。注意皮膚保養，避免接觸過敏原。適度的重量訓練有助強化骨骼健康。'],
+  '水':['腎臟、膀胱及泌尿系統需多加關注，多喝水，避免憋尿。今年情緒起伏較大，注意身心整體調養。充足睡眠對您的健康至關重要。','骨骼與關節需要保養，適合游泳、水中有氧運動。注意保暖，尤其是腰部與腎臟部位。減少酒精攝入，維護腎臟健康。'],
+};
+
+function pickText(obj, el, idx){
+  const arr = obj[el]||obj['土'];
+  return arr[idx%arr.length];
+}
+
+/* ════════════════════════════════════════════
+   CURRENT YEAR FORTUNE
+════════════════════════════════════════════ */
+function yearFortuneText(dmStem, elCounts, currentY){
+  const dmEl = SE[dmStem];
+  const dmName = DM_DATA[dmStem].name;
+  const cyp = yearPillar(currentY);
+  const cyEl = SE[cyp.stem];
+  const cyBrEl = BE[cyp.branch];
+  const cyName = STEMS[cyp.stem]+BRANCHES[cyp.branch];
+  const rel = elRelation(dmEl, cyEl);
+
+  let text = `今年（${currentY}年，${cyName}年）對您的命盤而言為「${rel}」之年。`;
+
+  const relationTexts = {
+    '印星（生我）': `流年五行生助您的日主${dmName}，今年整體運勢偏強，工作上多有貴人相助，學習與進修效果絕佳，是充電蓄力的好時機。感情方面較為穩定，家庭關係溫暖。建議今年多與長輩或師長交流，從中獲得智慧與支持。`,
+    '比劫（同類）': `流年五行與您的日主${dmName}同類，今年運勢較為平穩，同業競爭可能加劇，需靠自身實力突破。適合與同道中人合作，共同開拓新局面。財運方面有些波動，需注意財務管理，避免因朋友或合夥問題損財。`,
+    '食傷（我生）': `流年五行受您的日主${dmName}所生，今年創意思路活躍，表達能力強，適合從事需要溝通、創作的工作。事業上展現才華的機會多，但需防止精力過度分散。感情方面活躍，有機會拓展人際圈，增加緣分機遇。`,
+    '財星（我克）': `流年五行受您的日主${dmName}所克，今年財運旺盛，有進財機會，但需主動出擊方能掌握。適合積極開展新項目，財源多元化。感情方面緣分較旺，異性緣佳，適合追求心儀對象或深化伴侶關係。`,
+    '官殺（克我）': `流年五行克制您的日主${dmName}，今年有壓力與考驗，但也是突破成長的契機。工作上可能面臨挑戰或升遷壓力，需謹慎應對。建議保持平常心，用積極態度面對挑戰，逢凶化吉。健康方面需多加留意，勿過度疲勞。`,
+    '五行相涉': `流年五行與您的日主${dmName}各有作用，今年運勢平穩中有起伏。整體而言是穩中求進的一年，謹守本分、持續努力是最佳策略。建議在穩定的基礎上謀求突破，機會來臨時勇敢把握。`,
+  };
+
+  text += (relationTexts[rel]||relationTexts['五行相涉']);
+
+  // Add current year info
+  text += ` ＊ 今年地支${BRANCHES[cyp.branch]}（${ANIMALS[cyp.branch]}），五行帶${cyBrEl}，對您的${EL_ORGAN[cyBrEl]}需特別關注。`;
+
+  return text;
+}
+
+/* ════════════════════════════════════════════
+   MAIN CALCULATION & RENDER
+════════════════════════════════════════════ */
+function doCalc(){
+  const y   = parseInt(document.getElementById('inp-year').value)||0;
+  const mo  = parseInt(document.getElementById('inp-month').value)||0;
+  const d   = parseInt(document.getElementById('inp-day').value)||0;
+  const hStr= document.getElementById('inp-hour').value;
+
+  if(!y||y<1900||y>2099){alert('請輸入正確的出生年份（1900–2099）');return;}
+  if(!mo){alert('請選擇出生月份');return;}
+  if(!d||d<1||d>31){alert('請輸入正確的出生日期（1–31）');return;}
+  if(!hStr){alert('請選擇出生時辰（不知道請選「不知道出生時辰」）');return;}
+
+  const knowHour = hStr!=='unknown';
+  const h = knowHour ? parseInt(hStr) : -1;
+
+  // Calculate pillars
+  const yp = yearPillar(y);
+  const mp = monthPillar(yp.stem, mo, d);
+  const dp = dayPillar(y, mo, d);
+  const hp = knowHour ? hourPillar(dp.stem, h) : null;
+
+  const pillarsArr = [yp, mp, dp, ...(hp?[hp]:[])];
+  const elCounts = countElements(pillarsArr);
+  const dmStem = dp.stem;
+  const dmEl = SE[dmStem];
+  const ugEl = usefulGod(dmStem, elCounts);
+  const dmData = DM_DATA[dmStem];
+
+  // ── Render Pillars ──
+  const labels = ['年柱','月柱','日柱','時柱'];
+  const pillarsToShow = [
+    {label:'年柱', p:yp},
+    {label:'月柱', p:mp},
+    {label:'日柱', p:dp},
+    ...(hp?[{label:'時柱', p:hp}]:[]),
+  ];
+
+  const pgrid = document.getElementById('pillars-grid');
+  pgrid.innerHTML = pillarsToShow.map(({label,p},i)=>{
+    const sEl = SE[p.stem]; const bEl = BE[p.branch];
+    const sStyle = EL_STYLE[sEl]; const bStyle = EL_STYLE[bEl];
+    const isDayMaster = (label==='日柱');
+    return `<div class="pillar" style="${isDayMaster?'border-color:rgba(201,168,76,.7);box-shadow:0 0 20px rgba(201,168,76,.15)':''}">
+      <div class="p-label">${label}${isDayMaster?' ★':''}</div>
+      <div class="p-stem" style="color:${sStyle.color}">${STEMS[p.stem]}</div>
+      <div class="p-branch" style="color:${bStyle.color}">${BRANCHES[p.branch]}</div>
+      <span class="p-tag" style="color:${sStyle.color};background:${sStyle.bg};border:1px solid ${sStyle.border}">${sEl} ${SYY[p.stem]}</span>
+      <span class="p-tag" style="color:${bStyle.color};background:${bStyle.bg};border:1px solid ${bStyle.border}">${bEl}</span>
+      <div class="p-sub">${ANIMALS[p.branch]}（${BRANCHES[p.branch]}）</div>
+    </div>`;
+  }).join('');
+  if(!hp){
+    pgrid.innerHTML+=`<div class="pillar" style="opacity:.4;border-style:dashed">
+      <div class="p-label">時柱</div>
+      <div style="color:var(--text-dim);margin-top:30px;font-size:.8rem;line-height:2">
+        未輸入<br>出生時辰<br>（精準度受限）
+      </div>
+    </div>`;
+  }
+
+  // ── Render Five Elements ──
+  const total = Object.values(elCounts).reduce((a,b)=>a+b,0);
+  const elements = ['木','火','土','金','水'];
+  const egrid = document.getElementById('el-grid');
+  egrid.innerHTML = elements.map(el=>{
+    const cnt = elCounts[el]||0;
+    const pct = Math.round(cnt/total*100);
+    const s = EL_STYLE[el];
+    const isUG = el===ugEl;
+    return `<div class="el-item">
+      <div class="el-circle" style="color:${s.color};background:${s.bg};border-color:${s.border};${isUG?'box-shadow:0 0 16px '+s.color+';':''}">${el}</div>
+      <div class="el-count" style="color:${s.color}">${cnt}</div>
+      <div class="el-name">${['木','火','土','金','水'].indexOf(el)>=0?['陽木/陰木','陽火/陰火','陽土/陰土','陽金/陰金','陽水/陰水'][elements.indexOf(el)]:''}${isUG?' 用神':''}
+      </div>
+      <div class="el-bar-bg"><div class="el-bar" style="width:0%;background:${s.color}" data-pct="${pct}"></div></div>
+    </div>`;
+  }).join('');
+  // Animate bars
+  setTimeout(()=>{
+    document.querySelectorAll('.el-bar').forEach(b=>{
+      b.style.width = b.dataset.pct+'%';
+    });
+  },100);
+
+  // ── Render Destiny ──
+  const dest = document.getElementById('destiny-box');
+  const yearStr = STEMS[yp.stem]+BRANCHES[yp.branch];
+  const monthStr= STEMS[mp.stem]+BRANCHES[mp.branch];
+  const dayStr  = STEMS[dp.stem]+BRANCHES[dp.branch];
+  const hourStr = hp ? STEMS[hp.stem]+BRANCHES[hp.branch] : '？';
+  const stronger = elements.sort((a,b)=>(elCounts[b]||0)-(elCounts[a]||0));
+  const strongest = stronger[0]; const weakest = stronger[4];
+
+  dest.innerHTML=`
+    <div class="dest-type">${dmData.name} · ${dmData.title}</div>
+    <div class="dest-yy">${yearStr}年 · ${monthStr}月 · ${dayStr}日 · ${hourStr}時</div>
+    <div class="dest-desc">${dmData.desc}</div>
+    <div class="dest-desc" style="margin-top:14px">
+      <strong style="color:var(--gold)">命盤特質：</strong>
+      您的命盤中${strongest}行最旺（共${elCounts[strongest]}個），${weakest}行最弱（${elCounts[weakest]||0}個）。
+      日主${dmData.name}${(elCounts[dmEl]||0)+(elCounts[Object.keys(GEN_CYCLE).find(k=>GEN_CYCLE[k]===dmEl)||'水']||0) > total/2 ? '偏旺' : '偏弱'}，
+      用神為<span style="color:${EL_COLORS_CSS[ugEl]};font-weight:700">${ugEl}</span>行，
+      後天宜多接觸${ugEl}行事物以達命盤平衡。
+    </div>
+    <div class="traits">
+      ${dmData.traits.map(t=>`<span class="trait-tag" style="color:${EL_COLORS_CSS[dmEl]};border-color:${EL_COLORS_CSS[dmEl]};background:${EL_STYLE[dmEl].bg}">${t}</span>`).join('')}
+      ${dmData.neg.map(t=>`<span class="trait-tag" style="color:var(--text-dim);border-color:rgba(138,122,90,.3)">${t}</span>`).join('')}
+    </div>`;
+
+  // ── Render Lucky ──
+  const lgrid = document.getElementById('lucky-grid');
+  lgrid.innerHTML=[
+    {label:'用神五行',val:ugEl},
+    {label:'幸運顏色',val:EL_LUCKY_COLOR[ugEl]},
+    {label:'幸運數字',val:EL_LUCKY_NUM[ugEl]},
+    {label:'幸運方位',val:EL_LUCKY_DIR[ugEl]},
+    {label:'日主元素',val:dmEl},
+    {label:'生肖',val:ANIMALS[yp.branch]},
+    {label:'地支',val:BRANCHES[dp.branch]+'（'+ANIMALS[dp.branch]+'）'},
+    {label:'養生重點',val:EL_ORGAN[weakest||dmEl]},
+  ].map(({label,val})=>`<div class="lucky-item">
+    <div class="lucky-label">${label}</div>
+    <div class="lucky-val">${val}</div>
+  </div>`).join('');
+
+  // ── Year Fortune ──
+  const currentY = new Date().getFullYear();
+  document.getElementById('year-fortune-title').textContent=`${currentY} 年 流 年 運 勢`;
+  document.getElementById('year-fortune-box').innerHTML=
+    `<div class="year-title">流年論命</div>
+     <p>${yearFortuneText(dmStem, elCounts, currentY)}</p>`;
+
+  // ── Fortune Cards ──
+  const fIdx = (y+mo+d)%2; // pick variant based on birth data
+  const fgrid = document.getElementById('fortune-grid');
+  fgrid.innerHTML=[
+    {icon:'💼',title:'事業運',stars:'★★★★☆',text:pickText(CAREER_TEXT,dmEl,fIdx)},
+    {icon:'💰',title:'財　運',stars:'★★★☆☆',text:pickText(WEALTH_TEXT,dmEl,fIdx)},
+    {icon:'💖',title:'感情運',stars:'★★★★☆',text:pickText(LOVE_TEXT,  dmEl,fIdx)},
+    {icon:'🌿',title:'健康運',stars:'★★★☆☆',text:pickText(HEALTH_TEXT,dmEl,fIdx+(d%2))},
+  ].map(f=>`<div class="fc">
+    <div class="fc-title"><span class="fc-icon">${f.icon}</span>${f.title}</div>
+    <div class="fc-stars">${f.stars}</div>
+    <div class="fc-body">${f.text}</div>
+  </div>`).join('');
+
+  // Show results
+  const results = document.getElementById('results');
+  results.classList.add('show');
+  setTimeout(()=>results.scrollIntoView({behavior:'smooth',block:'start'}),100);
+}
+
+// Allow Enter key to submit
+document.addEventListener('keydown',e=>{if(e.key==='Enter')doCalc();});
+</script>
+</body>
+</html>
