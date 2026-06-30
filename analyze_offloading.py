@@ -196,12 +196,105 @@ def study4():
     print("    輕任務則相反，丟強車是浪費 → agent 要學會分流。")
 
 
+def make_figures():
+    """產生三張論文用圖：距離交叉、負載交叉、延遲-能耗權衡(Pareto)。標籤用英文。"""
+    import os
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    here = os.path.dirname(os.path.abspath(__file__))
+    saved = []
+
+    # --- 圖A：距離交叉 (V2V strong vs RSU)，vision ---
+    prof = TASKS["vision 影像(重)"]
+    ds = list(range(10, 151, 5))
+    v2v_lat, rsu_lat = [], []
+    for sd in ds:
+        nodes, geo = fresh_world(strong_d=sd)
+        t = make_task("vision", prof)
+        v = eval_option(nodes, geo, t, "V2V 強車", "v2v")
+        r = eval_option(nodes, geo, t, "基站 RSU", "rsu")
+        v2v_lat.append(v["latency"] * 1000 if v else np.nan)
+        rsu_lat.append(r["latency"] * 1000)
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(ds, v2v_lat, "-o", ms=3, color="#1565c0", label="V2V (strong helper, 12 GHz)")
+    ax.plot(ds, rsu_lat, "--", color="#ef6c00", label="RSU (edge, 8 GHz)")
+    ax.set_xlabel("Distance to strong helper vehicle (m)")
+    ax.set_ylabel("Task latency (ms)")
+    ax.set_title("V2V vs V2I crossover with helper distance (heavy task)")
+    ax.grid(alpha=0.3); ax.legend()
+    fA = os.path.join(here, "fig_crossover_distance.png")
+    plt.tight_layout(); plt.savefig(fA, dpi=150); plt.close(); saved.append(fA)
+
+    # --- 圖B：負載交叉 (RSU vs Cloud)，nav ---
+    prof = TASKS["nav 導航(中)"]
+    loads = list(range(0, 9))
+    rsu_l, cloud_l = [], []
+    for nload in loads:
+        nodes, geo = fresh_world()
+        for _ in range(nload):
+            d = make_task("nav", prof)
+            estimate(d, "rsu", 0.0, geo["holder"], nodes,
+                     target_id="rsu_0", target_pos=geo["rsu"], commit=True)
+        t = make_task("nav", prof)
+        rsu_l.append(eval_option(nodes, geo, t, "基站 RSU", "rsu")["latency"] * 1000)
+        cloud_l.append(eval_option(nodes, geo, t, "雲端 cloud", "cloud")["latency"] * 1000)
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(loads, rsu_l, "-o", ms=4, color="#ef6c00", label="RSU (edge, FIFO queue)")
+    ax.plot(loads, cloud_l, "--", color="#c62828", label="Cloud (no queue, +backhaul)")
+    ax.set_xlabel("Tasks already queued at RSU")
+    ax.set_ylabel("Task latency (ms)")
+    ax.set_title("RSU vs Cloud crossover with edge congestion (medium task)")
+    ax.grid(alpha=0.3); ax.legend()
+    fB = os.path.join(here, "fig_crossover_load.png")
+    plt.tight_layout(); plt.savefig(fB, dpi=150); plt.close(); saved.append(fB)
+
+    # --- 圖C：延遲-能耗權衡 (vision，五選擇 Pareto) ---
+    prof = TASKS["vision 影像(重)"]
+    nodes, geo = fresh_world()
+    t = make_task("vision", prof)
+    labels = {"本地 local": "Local", "V2V 強車": "V2V-strong",
+              "V2V 近車": "V2V-weak", "基站 RSU": "RSU", "雲端 cloud": "Cloud"}
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for disp, kind in OPTIONS:
+        res = eval_option(nodes, geo, t, disp, kind)
+        if res is None:
+            continue
+        miss = res["latency"] > prof["deadline"]
+        ax.scatter(res["latency"] * 1000, res["energy"], s=90,
+                   color=("#b0b0b0" if miss else "#1565c0"),
+                   edgecolor="black", zorder=3)
+        ax.annotate(labels[disp] + (" (miss)" if miss else ""),
+                    (res["latency"] * 1000, res["energy"]),
+                    textcoords="offset points", xytext=(8, 4), fontsize=9)
+    ax.axvline(prof["deadline"] * 1000, color="red", ls=":", alpha=0.7,
+               label=f"deadline {prof['deadline']*1000:.0f} ms")
+    ax.set_xlabel("Task latency (ms)  — lower is better")
+    ax.set_ylabel("Energy per task (J)  — lower is better")
+    ax.set_title("Latency–Energy tradeoff (heavy task): lower-left is best")
+    ax.grid(alpha=0.3); ax.legend()
+    fC = os.path.join(here, "fig_tradeoff_vision.png")
+    plt.tight_layout(); plt.savefig(fC, dpi=150); plt.close(); saved.append(fC)
+
+    print("\n已產生圖檔：")
+    for s in saved:
+        print("  " + s)
+    return saved
+
+
 if __name__ == "__main__":
+    import sys
     print("卸載決策分析（純成本模型，不需 SUMO）\n")
     study1()
     study2()
     study3()
     study4()
+    if "--plot" in sys.argv:
+        make_figures()
+    else:
+        print("\n(加 --plot 可另存三張論文用圖：距離交叉、負載交叉、延遲-能耗權衡)")
     print("\n" + "=" * 78)
     print("解讀：本分析是『單筆任務、給定情境』的最佳解 oracle。")
     print("MAPPO 要在『多車競爭 + 佇列動態 + 移動性』下逼近這種分流，")
