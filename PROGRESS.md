@@ -108,7 +108,7 @@ GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick �
 
 | 檔案 | 動作 |
 |---|---|
-| `setup_rsu.py` | 重佈 RSU → 產生新的 `rsu_positions.json` |
+| `setup_rsu.py` | 重佈 RSU → 產生新的 `rsu_positions.json`（✅ 已自適應：RSU 數依覆蓋率自動決定、半徑同步 RSU_RANGE_M；`python setup_rsu.py` 即可，或 `--num/--target/--radius` 覆寫） |
 | `vd_sumo_mapping.csv` | 重抓新區 VD(TDX/data.taipei)對應到新 edge |
 | `turning_ratio.csv` / `calibrators.add.xml` | 依新 edge 重建轉向比與校正器 |
 | `osm.sumocfg` | 指向新 net |
