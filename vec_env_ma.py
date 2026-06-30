@@ -245,9 +245,11 @@ class VECMultiEnv:
             self.stats["cost_sum"] += r["cost"]   # 本地 fallback：成本為 0
             if total <= task.deadline_s:
                 self.stats["success"] += 1
+                self._record_kind(task.kind, True)
             else:
                 self.stats["fail"] += 1
                 self.stats["deadline_miss"] += 1
+                self._record_kind(task.kind, False)
 
     def _advance_to_active(self):
         guard = 0
@@ -284,6 +286,7 @@ class VECMultiEnv:
         if not reach:
             self.stats["fail"] += 1
             self.stats["infeasible"] += 1
+            self._record_kind(task.kind, False)
             return -PENALTY_FAIL
 
         # V2V 兩種動作在成本模型裡都是 "v2v"
@@ -299,6 +302,7 @@ class VECMultiEnv:
                 self.stats["link_break"] += 1
             else:
                 self.stats["infeasible"] += 1
+            self._record_kind(task.kind, False)
             return -PENALTY_FAIL
 
         total = ctx["hop"] + r["latency"]
@@ -313,9 +317,11 @@ class VECMultiEnv:
         reward = -(total + ENERGY_W * energy / ENERGY_NORM + COST_W * r["cost"])
         if total <= task.deadline_s:
             self.stats["success"] += 1
+            self._record_kind(task.kind, True)
         else:
             self.stats["fail"] += 1
             self.stats["deadline_miss"] += 1
+            self._record_kind(task.kind, False)
             reward -= PENALTY_MISS
         return reward
 
@@ -358,7 +364,14 @@ class VECMultiEnv:
                       "infeasible": 0, "link_break": 0, "fallback": 0,
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
-                      "cost_sum": 0.0, "by_target": {}}
+                      "cost_sum": 0.0, "by_target": {},
+                      "kind_total": {}, "kind_success": {}}   # 各任務類型成功率
+
+    def _record_kind(self, kind, ok):
+        """記錄某任務類型的成敗（給 vision-only 等分類型成功率用）。"""
+        self.stats["kind_total"][kind] = self.stats["kind_total"].get(kind, 0) + 1
+        if ok:
+            self.stats["kind_success"][kind] = self.stats["kind_success"].get(kind, 0) + 1
 
     def reset(self, seed=None):
         if self.world is not None:
@@ -412,8 +425,12 @@ class VECMultiEnv:
     def episode_summary(self):
         s = self.stats
         done = s["success"] + s["fail"]
+        kt, ks = s["kind_total"], s["kind_success"]
+        kind_sr = {k: (ks.get(k, 0) / kt[k]) for k in kt if kt[k]}
         return {"generated": s["generated"],
                 "success_rate": (s["success"] / done) if done else 0.0,
+                "vision_success_rate": kind_sr.get("vision", 0.0),  # 重任務成功率(動態範圍大)
+                "kind_success_rate": kind_sr,                       # 各類型成功率
                 "avg_latency_ms": (s["latency_sum"] / s["latency_n"] * 1000)
                                   if s["latency_n"] else 0.0,
                 "avg_energy_j": (s["energy_sum"] / s["energy_n"])

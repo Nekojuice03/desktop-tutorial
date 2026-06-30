@@ -44,7 +44,7 @@ ACTION_LABELS = {"local": "Local", "v2v_strong": "V2V-strong",
 
 
 def run_episodes(env, mode, algo=None, episodes=8, seed0=1000):
-    succ, lat, ener = [], [], []
+    succ, vis, lat, ener, cost = [], [], [], [], []
     dist = Counter()
     for ep in range(episodes):
         rng = np.random.default_rng(seed0 + ep)   # Random 基準的動作抽樣也固定種子(可重現)
@@ -75,16 +75,22 @@ def run_episodes(env, mode, algo=None, episodes=8, seed0=1000):
                 break
         s = info["episode_stats"]
         succ.append(s["success_rate"] * 100)
+        vis.append(s.get("vision_success_rate", 0.0) * 100)
         lat.append(s["avg_latency_ms"])
         ener.append(s.get("avg_energy_j", 0.0))
+        cost.append(s.get("avg_cost", 0.0))
         for a, c in s["by_target"].items():
             dist[a] += c
     return {"success_mean": float(np.mean(succ)),
             "success_std": float(np.std(succ)),
+            "vision_success_mean": float(np.mean(vis)),
+            "vision_success_std": float(np.std(vis)),
             "latency_mean": float(np.mean(lat)),
             "latency_std": float(np.std(lat)),
             "energy_mean": float(np.mean(ener)),
             "energy_std": float(np.std(ener)),
+            "cost_mean": float(np.mean(cost)),
+            "cost_std": float(np.std(cost)),
             "dist": dict(dist)}
 
 
@@ -122,8 +128,10 @@ def main():
         r = run_episodes(env, mode, algo=algo, episodes=episodes)
         env.close()
         results[disp] = r
-        print(f"  {disp:16s} 成功率 {r['success_mean']:5.1f}% (±{r['success_std']:.1f}) "
-              f"延遲 {r['latency_mean']:6.0f}ms  能耗 {r['energy_mean']:.3f}J")
+        print(f"  {disp:16s} 成功率 {r['success_mean']:5.1f}% "
+              f"(vision {r['vision_success_mean']:4.0f}%) "
+              f"延遲 {r['latency_mean']:6.0f}ms  能耗 {r['energy_mean']:.3f}J  "
+              f"成本 {r['cost_mean']:.4f}")
 
     # 存 JSON
     out_json = os.path.join(SCRIPT_DIR, "compare_results.json")
@@ -181,6 +189,22 @@ def main():
     plt.savefig(f2b, dpi=150); plt.close()
     saved.append(f2b)
 
+    # 圖2c：平均使用成本(pay-per-use)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    cm = [results[n]["cost_mean"] for n in names]
+    cs = [results[n]["cost_std"] for n in names]
+    bars = ax.bar(names, cm, yerr=cs, capsize=4, color=colors, edgecolor="black", linewidth=0.6)
+    ax.set_ylabel("Average Usage Cost per Task")
+    ax.set_title(f"Average Offloading Cost by Method ({tag})  — lower is better")
+    for b, v in zip(bars, cm):
+        ax.text(b.get_x() + b.get_width()/2, v + max(cm + [1e-9])*0.01, f"{v:.4f}",
+                ha="center", fontsize=8)
+    plt.xticks(rotation=20, ha="right")
+    plt.tight_layout()
+    f2c = os.path.join(SCRIPT_DIR, "fig_cost.png")
+    plt.savefig(f2c, dpi=150); plt.close()
+    saved.append(f2c)
+
     # 圖3：MAPPO 動作分布
     if "MAPPO (ours)" in results:
         d = results["MAPPO (ours)"]["dist"]
@@ -200,45 +224,72 @@ def main():
         plt.savefig(f3, dpi=150); plt.close()
         saved.append(f3)
 
-    # 圖4：收斂曲線(若有 csv)：原始線(淡) + 滑動平均(粗)
+    # 圖4 / 圖5：收斂曲線(若有 csv)。依表頭解析多指標欄位。
     csv_path = os.path.join(SCRIPT_DIR, "mappo_train_log.csv")
     if os.path.exists(csv_path):
-        its, srs = [], []
         with open(csv_path, encoding="utf-8") as f:
-            next(f)
+            header = f.readline().strip().split(",")
+            cols = {h: [] for h in header}
             for line in f:
                 p = line.strip().split(",")
-                if len(p) >= 2:
-                    its.append(int(p[0])); srs.append(float(p[1]))
-        if len(its) >= 2:
-            its = np.array(its); srs = np.array(srs)
-            # 滑動平均(視窗大小依點數自動調整)
-            w = max(3, len(srs) // 8)
+                if len(p) < len(header):
+                    continue
+                for h, v in zip(header, p):
+                    cols[h].append(float(v))
+        its = np.array(cols.get("iter", []))
+
+        def smoothed(y):
+            y = np.array(y)
+            w = max(3, len(y) // 8)
             if w % 2 == 0:
                 w += 1
-            if len(srs) >= w:
-                kernel = np.ones(w) / w
-                smooth = np.convolve(srs, kernel, mode="same")
-                # 修正首尾邊界(用累積平均避免邊緣下垂)
-                for i in range(w // 2):
-                    smooth[i] = srs[:i + w // 2 + 1].mean()
-                    smooth[-(i + 1)] = srs[-(i + w // 2 + 1):].mean()
-            else:
-                smooth = srs
+            if len(y) < w:
+                return y
+            sm = np.convolve(y, np.ones(w) / w, mode="same")
+            for i in range(w // 2):   # 修正首尾邊界
+                sm[i] = y[:i + w // 2 + 1].mean()
+                sm[-(i + 1)] = y[-(i + w // 2 + 1):].mean()
+            return sm
+
+        # 圖4：成功率收斂(原始 + 滑動平均) — 維持原樣
+        if "success_rate" in cols and len(its) >= 2:
+            srs = np.array(cols["success_rate"])
             fig, ax = plt.subplots(figsize=(8, 5))
-            ax.plot(its, srs, color="#90caf9", linewidth=1.2, alpha=0.7,
-                    label="Raw (per eval)")
-            ax.plot(its, smooth, color="#1565c0", linewidth=2.5,
-                    label=f"Smoothed (moving avg, w={w})")
-            ax.set_xlabel("Training Iteration")
-            ax.set_ylabel("Task Success Rate (%)")
+            ax.plot(its, srs, color="#90caf9", lw=1.2, alpha=0.7, label="Raw (per eval)")
+            ax.plot(its, smoothed(srs), color="#1565c0", lw=2.5, label="Smoothed")
+            ax.set_xlabel("Training Iteration"); ax.set_ylabel("Task Success Rate (%)")
             ax.set_title(f"MAPPO Training Convergence ({tag})")
-            ax.grid(alpha=0.3)
-            ax.legend(loc="lower right")
+            ax.grid(alpha=0.3); ax.legend(loc="lower right")
             plt.tight_layout()
             f4 = os.path.join(SCRIPT_DIR, "fig_convergence.png")
-            plt.savefig(f4, dpi=150); plt.close()
-            saved.append(f4)
+            plt.savefig(f4, dpi=150); plt.close(); saved.append(f4)
+
+        # 圖5：多指標收斂(成功率 / vision 成功率 / 延遲 / 能耗 / 成本)2x3 面板
+        panels = [
+            ("success_rate", "Success Rate (%)", False),
+            ("vision_success_rate", "Vision-only Success (%)", False),
+            ("avg_latency_ms", "Avg Latency (ms)", True),
+            ("avg_energy_j", "Avg Energy (J)", True),
+            ("avg_cost", "Avg Cost", True),
+        ]
+        present = [(c, lbl, lo) for c, lbl, lo in panels if c in cols and len(its) >= 2]
+        if present:
+            fig, axes = plt.subplots(2, 3, figsize=(14, 8))
+            axes = axes.ravel()
+            for ax, (c, lbl, lower_better) in zip(axes, present):
+                y = np.array(cols[c])
+                ax.plot(its, y, color="#90caf9", lw=1.0, alpha=0.6)
+                ax.plot(its, smoothed(y), color="#1565c0", lw=2.2)
+                ax.set_xlabel("Iteration")
+                ax.set_ylabel(lbl + ("  ↓" if lower_better else "  ↑"))
+                ax.set_title(lbl)
+                ax.grid(alpha=0.3)
+            for ax in axes[len(present):]:
+                ax.axis("off")
+            fig.suptitle(f"MAPPO Convergence — multi-metric ({tag})", fontsize=13)
+            plt.tight_layout()
+            f5 = os.path.join(SCRIPT_DIR, "fig_convergence_metrics.png")
+            plt.savefig(f5, dpi=150); plt.close(); saved.append(f5)
 
     print("已產生圖檔：")
     for s in saved:

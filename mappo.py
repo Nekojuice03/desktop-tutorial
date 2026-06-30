@@ -66,6 +66,14 @@ class MAPPO:
         self.gamma, self.lam, self.clip = gamma, lam, clip
         self.epochs, self.ent_coef, self.vf_coef = epochs, ent_coef, vf_coef
         self.device = device
+        self.lr0 = lr      # 初始學習率(供線性衰減用)
+
+    def set_lr(self, frac):
+        """線性衰減學習率：lr = lr0 × frac(frac 由 1→0)。穩定後期、減少策略震盪(那個 dip)。"""
+        lr = self.lr0 * max(0.0, frac)
+        for g in self.opt.param_groups:
+            g["lr"] = lr
+        return lr
 
     # ---------- 與環境互動（rollout 時用）----------
     @torch.no_grad()
