@@ -139,6 +139,25 @@ def predict_contact(tr_a, tr_b, comm_range, horizon=60.0, dt=0.5):
     return horizon
 
 
+def predict_contact_static(tr, point, comm_range, horizon=60.0, dt=0.5):
+    """
+    已追蹤車輛對「靜止點」(RSU)的預測連線壽命(秒)：前推車輛 CTRV，
+    回傳與 point 距離首次超過 comm_range 的時刻。給 V2I(rsu/cloud)
+    的移動性預判用——讓 kalman 層對 V2V 與 V2I 一視同仁。
+    """
+    a = list(tr.x)
+    decay = 0.5 ** (dt / OMEGA_HALF_LIFE_S)
+    if math.dist(a[:2], point) > comm_range:
+        return 0.0
+    t = 0.0
+    while t < horizon:
+        a = list(_ctrv_step(*a, dt)); a[4] *= decay
+        t += dt
+        if math.dist(a[:2], point) > comm_range:
+            return t
+    return horizon
+
+
 # ==================================================================
 # 自我測試：python kalman_tracker.py
 # ==================================================================

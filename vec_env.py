@@ -110,6 +110,13 @@ class TraciWorld:
         v = max(t.vehicle.getSpeed(vid), v_floor, 1.0)
         return max(remain, 0.0) / v
 
+    def route_exit_time(self, vid):
+        """單車離場時間的公開介面(V2I 移動性上限用)；查詢失敗回 None。"""
+        try:
+            return self._route_exit_time(vid)
+        except Exception:
+            return None
+
     def route_divergence_time(self, a, b):
         """
         兩車依「已知路線」還能保持連線多久(秒)；資訊不足回 None(退回等速外推)。
@@ -202,6 +209,10 @@ class MockWorld:
 
     def route_divergence_time(self, a, b):
         """Mock 車流沒有路線資訊 → None(呼叫端退回等速外推)。"""
+        return None
+
+    def route_exit_time(self, vid):
+        """Mock 車流沒有路線資訊 → None。"""
         return None
 
     def close(self):

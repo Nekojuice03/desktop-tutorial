@@ -18,7 +18,7 @@ import os
 import math
 import numpy as np
 
-from kalman_tracker import EKFCTRV, predict_contact
+from kalman_tracker import EKFCTRV, predict_contact, predict_contact_static
 
 from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
                         neighbors_in_range, rsus_in_range, contact_time)
@@ -131,11 +131,21 @@ class VECMultiEnv:
         if kind in ("v2v_strong", "v2v_near"):
             return self._pair_contact(ctx["holder_id"], ctx["holder_pos"], tid, tpos)
         if kind in ("rsu", "cloud"):
+            # V2I 與 V2V 同一套預判階梯(對稱，避免偏袒基礎設施)：
+            if self.predictor == "kalman":
+                tr = self._trackers.get(ctx["holder_id"])
+                if tr is not None and tr.ready:
+                    return predict_contact_static(tr, tpos, RSU_RANGE_M)
             hv = velocity_from_speed_angle(
                 self.veh_states[ctx["holder_id"]]["speed"],
                 self.veh_states[ctx["holder_id"]]["angle"]) \
                 if ctx["holder_id"] in self.veh_states else (0.0, 0.0)
-            return contact_time(ctx["holder_pos"], hv, tpos, (0.0, 0.0), RSU_RANGE_M)
+            c = contact_time(ctx["holder_pos"], hv, tpos, (0.0, 0.0), RSU_RANGE_M)
+            if self.predictor == "route":
+                t_exit = self.world.route_exit_time(ctx["holder_id"])
+                if t_exit is not None:
+                    c = min(c, t_exit)   # 持有車離場前必須收到結果
+            return c
         return None  # local
 
     # ---------- 單一任務情境 ----------
@@ -372,20 +382,22 @@ class VECMultiEnv:
         if total > task.deadline_s:
             reward -= PENALTY_MISS
 
-        if est_kind == "v2v":
-            # ★事件驅動結算：V2V 的成敗不在決策當下拍板，而是掛到「預計完成時刻」，
-            #   屆時用 SUMO/世界的真實位置驗證兩車是否仍在範圍內(預判可能出錯，
-            #   如轉彎)。此刻先回「預測獎勵」給 RL；結算若與預測不符，差額(delta)
-            #   會補進之後 tick 的團隊獎勵(GAE 會把延後的信用往回傳)。
+        if est_kind != "local":
+            # ★事件驅動結算(V2V 與 RSU/雲一視同仁，避免只有 V2V 承受執行期風險)：
+            #   成敗不在決策當下拍板，而是掛到「預計完成時刻」，屆時用世界的
+            #   真實位置驗證「結果送得回持有車嗎」。此刻先回「預測獎勵」給 RL；
+            #   結算與預測不符的差額(delta)補進之後 tick 的團隊獎勵(GAE 回傳信用)。
             self._inflight.append({
+                "mode": "v2v" if est_kind == "v2v" else "infra",
                 "task": task, "helper": tid, "holder": ctx["holder_id"],
+                "serving_rsu": ctx["rsu_id"],   # infra：執行/轉送用的服務基站
                 "t_done": now + r["latency"],   # now 已含指派跳時刻
                 "total": total, "energy": energy, "cost": r["cost"],
                 "pred_reward": reward,
             })
             return reward
 
-        # 非 V2V(本地/RSU/雲)：目標不會移動或不受 V2V 斷線影響 → 決策當下即結算
+        # 本地：不經無線傳輸 → 決策當下即結算
         self._finalize(total, energy, r["cost"], task, ok=(total <= task.deadline_s))
         return reward
 
@@ -423,9 +435,54 @@ class VECMultiEnv:
             self._settle_one(f)
         self._inflight = remain
 
+    def _fail_settle(self, f, consumer_gone=False):
+        """結算為不可恢復失敗：計數 + 統計 + 獎勵差額。"""
+        task = f["task"]
+        self.stats["link_break"] += 1
+        if consumer_gone:
+            self.stats["consumer_left"] += 1
+        self.stats["break_failed"] += 1
+        self.stats["fail"] += 1
+        self._record_kind(task.kind, False)
+        self._settle_delta += (-PENALTY_FAIL) - f["pred_reward"]
+
     def _settle_one(self, f):
         task = f["task"]
         hp = self.veh_states.get(f["holder"])
+
+        if f["mode"] == "infra":
+            # ---- RSU/雲：結果由基礎設施下行送回持有車 ----
+            if hp is None:
+                self._fail_settle(f, consumer_gone=True)   # 持有車離場，結果無人接收
+                return
+            srv = f["serving_rsu"]
+            srv_pos = (self.rsus[srv]["x"], self.rsus[srv]["y"])
+            if distance(hp["pos"], srv_pos) <= RSU_RANGE_M:
+                self._finalize(f["total"], f["energy"], f["cost"], task,
+                               ok=(f["total"] <= task.deadline_s))
+                return
+            # 駛出原服務基站覆蓋 → 基礎設施互聯，換手到目前最近的 RSU 重送結果
+            # (蜂巢式常態操作，不算斷線；但要付換手存取 + 重送下行的代價)
+            near = rsus_in_range(hp["pos"], self.rsus, RSU_RANGE_M)
+            if near:
+                p2 = (self.rsus[near[0]]["x"], self.rsus[near[0]]["y"])
+                t_dn = transmission_delay(task.result_bits,
+                                          distance(hp["pos"], p2), V2I_LINK)
+                if t_dn != INF:
+                    extra = RSU_EXTRA_LATENCY + t_dn
+                    new_total = f["total"] + extra
+                    new_energy = f["energy"] + TX_POWER_W * t_dn
+                    ok = new_total <= task.deadline_s
+                    self.stats["rsu_handover"] += 1
+                    self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
+                    new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
+                                   + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
+                    self._settle_delta += new_reward - f["pred_reward"]
+                    return
+            self._fail_settle(f)   # 覆蓋空洞：無任何 RSU 可送達
+            return
+
+        # ---- V2V：驗證持有車與執行車是否仍在範圍 ----
         ep = self.veh_states.get(f["helper"])
         in_range = (hp is not None and ep is not None and
                     distance(hp["pos"], ep["pos"]) <= V2V_RANGE_M)
@@ -514,6 +571,7 @@ class VECMultiEnv:
                       "break_recovered": 0,  # 斷線但經 V2I 遷移救回(可能仍超時)
                       "break_failed": 0,     # 斷線且無法恢復 → 任務失敗
                       "consumer_left": 0,    # 其中：持有車已離場(結果無人接收，break_failed 子類)
+                      "rsu_handover": 0,     # RSU/雲結果經「換手」由新服務基站送達(非斷線)
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
                       "cost_sum": 0.0, "by_target": {},
@@ -604,6 +662,7 @@ class VECMultiEnv:
                 "break_recovered": s["break_recovered"],
                 "break_failed": s["break_failed"],
                 "consumer_left": s["consumer_left"],
+                "rsu_handover": s["rsu_handover"],
                 "fallback": s["fallback"],
                 "by_target": dict(s["by_target"])}
 

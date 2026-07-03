@@ -29,7 +29,7 @@ from vec_env_ma import VECMultiEnv, SCRIPT_DIR
 COMBOS = [(p, r) for p in ("linear", "kalman", "route")
           for r in ("fail", "v2i")]
 EVENT_KEYS = ("pred_reject", "link_break", "break_recovered", "break_failed",
-              "consumer_left")
+              "consumer_left", "rsu_handover")
 
 
 def run_episodes(env, mode, algo=None, episodes=6, seed0=2000):
@@ -110,7 +110,7 @@ def main():
         print(f"\n── 策略：{pol} ──")
         print(f"  {'predictor':9}{'recovery':9}{'成功率%':>8}{'vision%':>8}"
               f"{'延遲ms':>8}{'能耗J':>7}{'成本':>7}"
-              f"{'預判拒':>7}{'斷線':>5}{'救回':>5}{'損失':>5}{'客離場':>6}")
+              f"{'預判拒':>7}{'斷線':>5}{'救回':>5}{'損失':>5}{'客離場':>6}{'換手':>5}")
         for pred, rec in COMBOS:
             env = VECMultiEnv(**base_cfg, predictor=pred, recovery=rec)
             r = run_episodes(env, pol, algo=algo, episodes=episodes)
@@ -120,7 +120,7 @@ def main():
                   f"{r['latency']:8.0f}{r['energy']:7.2f}{r['cost']:7.3f}"
                   f"{r['pred_reject']:7d}{r['link_break']:5d}"
                   f"{r['break_recovered']:5d}{r['break_failed']:5d}"
-                  f"{r['consumer_left']:6d}")
+                  f"{r['consumer_left']:6d}{r['rsu_handover']:5d}")
 
     out = os.path.join(SCRIPT_DIR, "ablation_results.json")
     with open(out, "w", encoding="utf-8") as f:
