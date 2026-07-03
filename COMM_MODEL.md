@@ -79,10 +79,13 @@ delay = data_bits / rate(d)             ；d > 覆蓋半徑 → ∞(卸載失敗
 `總延遲 ≤ contact_s`,不足即拒絕(`pred_reject`)。預測器兩級(消融用,
 `VECMultiEnv(predictor=...)`):
 - `"linear"`:等速直線外推(`comm_model.contact_time` 解析解)——路口轉彎會**高估**。
-- `"route"`(預設):再取 `min(直線外推, 路線分歧時間)`。路線分歧時間由
-  `TraciWorld.route_divergence_time()` 用兩車剩餘 route 的共同前綴長度/較快車速估計
-  ——物理上對應 **V2X 意圖分享**(SAE J2735 BSM Path Prediction、ETSI CAM path
-  history:車輛本就廣播預測路徑,數位孿生為其匯集點),非作弊。
+- `"route"`(預設):再取 `min(直線外推, 離場時間, 路線分歧時間)`。由
+  `TraciWorld.route_divergence_time()` 估計:
+  (i) **離場時間**——任一車走完剩餘路線抵達終點就會離開模擬(SUMO 消融實測的
+  斷線**主因**,而非開出範圍);紅燈停等以車道限速三成為速度下限。
+  (ii) **分歧時間**——同路兩車的共同前綴長度/較快車速(不同路無法對齊時仍保留離場上限)。
+  物理上對應 **V2X 意圖分享**(SAE J2735 BSM Path Prediction、ETSI CAM path
+  history:車輛本就廣播預測路徑與目的地,數位孿生為其匯集點),非作弊。
   文獻:link lifetime prediction 可將任務丟失/重做率降 70–80%(Sensors 2022)。
 
 *事件驅動結算*:V2V 任務不在決策當下拍板,而是掛到「預計完成時刻」,屆時用
@@ -92,7 +95,11 @@ SUMO **真實位置**驗證兩車是否仍在範圍內 —— 預判失準(轉�
 *恢復層(service migration)*:真實斷線時(`VECMultiEnv(recovery=...)`):
 - `"v2i"`(預設):結果經基礎設施遷移 執行車→RSU→(有線)→RSU→持有車,
   遷移延遲 = V2I 存取 + 兩段 V2I 傳輸,可能因此超時;救回計 `break_recovered`。
+  **執行車已抵達離場**時用其離場前最後位置做「優雅退場交接」(車輛抵達不是
+  瞬間蒸發,離場前可把結果交給路側)——修正先前對象離場即無法恢復的問題。
 - `"fail"`:直接失敗(`break_failed`);兩端任一側無 RSU 覆蓋時亦同。
+- **持有車離場**(結果無人接收)為任務作廢,獨立計 `consumer_left`
+  (break_failed 子類),論文可分開報告。
 文獻:migration-enabled task offloading / service continuity(CCF TPCI 2024 等)。
 
 rsu/cloud 目標為靜止基站,仍用等速外推的 sojourn 檢查;本地不檢查。

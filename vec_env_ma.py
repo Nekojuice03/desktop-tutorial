@@ -215,6 +215,10 @@ class VECMultiEnv:
         now, veh_states = self.world.step()
         self.now = now
         self.veh_states = veh_states
+        # 記住每台車最後出現的位置：車輛抵達終點會從模擬消失(despawn)，
+        # 結算時若執行車已離場，用它離場前的位置做「優雅退場交接」(見 _settle_one)
+        for vid, s in veh_states.items():
+            self._last_seen[vid] = s["pos"]
         for vid in veh_states:
             if vid not in self.roles:
                 if is_server(vid, self.server_ratio):
@@ -407,27 +411,37 @@ class VECMultiEnv:
             return
 
         # ---- 真實斷線(runtime link break) ----
+        # SUMO 實測主因不是「開出範圍」而是「車輛抵達終點離開模擬(despawn)」：
+        #   持有車離場 → 結果無人接收，性質上是任務作廢(consumer_left)，不可恢復。
+        #   執行車離場 → 「優雅退場交接」：車輛抵達不是瞬間蒸發，離場前可把結果
+        #     交給其最後位置附近的 RSU(用 _last_seen 快取) → 仍可走 V2I 遷移。
         self.stats["link_break"] += 1
-        if self.recovery == "v2i" and hp is not None and ep is not None:
-            r1 = rsus_in_range(ep["pos"], self.rsus, RSU_RANGE_M)   # 執行車側 RSU
-            r2 = rsus_in_range(hp["pos"], self.rsus, RSU_RANGE_M)   # 持有車側 RSU
-            if r1 and r2:
-                p1 = (self.rsus[r1[0]]["x"], self.rsus[r1[0]]["y"])
-                p2 = (self.rsus[r2[0]]["x"], self.rsus[r2[0]]["y"])
-                t_up = transmission_delay(task.result_bits, distance(ep["pos"], p1), V2I_LINK)
-                t_dn = transmission_delay(task.result_bits, distance(hp["pos"], p2), V2I_LINK)
-                if t_up != INF and t_dn != INF:
-                    extra = RSU_EXTRA_LATENCY + t_up + t_dn   # 遷移延遲(RSU間走有線骨幹，忽略)
-                    new_total = f["total"] + extra
-                    new_energy = f["energy"] + TX_POWER_W * (t_up + t_dn)
-                    ok = new_total <= task.deadline_s
-                    self.stats["break_recovered"] += 1
-                    self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
-                    new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
-                                   + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
-                    self._settle_delta += new_reward - f["pred_reward"]
-                    return
-        # 無法恢復(策略=fail、車已離場、或任一側無 RSU 覆蓋)
+        if hp is None:
+            self.stats["consumer_left"] += 1   # break_failed 的子類(帳務仍計 break_failed)
+        elif self.recovery == "v2i":
+            helper_pos = ep["pos"] if ep is not None else self._last_seen.get(f["helper"])
+            if helper_pos is not None:
+                r1 = rsus_in_range(helper_pos, self.rsus, RSU_RANGE_M)  # 執行車側 RSU
+                r2 = rsus_in_range(hp["pos"], self.rsus, RSU_RANGE_M)   # 持有車側 RSU
+                if r1 and r2:
+                    p1 = (self.rsus[r1[0]]["x"], self.rsus[r1[0]]["y"])
+                    p2 = (self.rsus[r2[0]]["x"], self.rsus[r2[0]]["y"])
+                    t_up = transmission_delay(task.result_bits,
+                                              distance(helper_pos, p1), V2I_LINK)
+                    t_dn = transmission_delay(task.result_bits,
+                                              distance(hp["pos"], p2), V2I_LINK)
+                    if t_up != INF and t_dn != INF:
+                        extra = RSU_EXTRA_LATENCY + t_up + t_dn  # RSU 間走有線骨幹，忽略
+                        new_total = f["total"] + extra
+                        new_energy = f["energy"] + TX_POWER_W * (t_up + t_dn)
+                        ok = new_total <= task.deadline_s
+                        self.stats["break_recovered"] += 1
+                        self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
+                        new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
+                                       + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
+                        self._settle_delta += new_reward - f["pred_reward"]
+                        return
+        # 無法恢復(持有車離場、策略=fail、或任一側無 RSU 覆蓋)
         self.stats["break_failed"] += 1
         self.stats["fail"] += 1
         self._record_kind(task.kind, False)
@@ -474,6 +488,7 @@ class VECMultiEnv:
                       "link_break": 0,       # 執行期真實斷線事件(= recovered+failed)
                       "break_recovered": 0,  # 斷線但經 V2I 遷移救回(可能仍超時)
                       "break_failed": 0,     # 斷線且無法恢復 → 任務失敗
+                      "consumer_left": 0,    # 其中：持有車已離場(結果無人接收，break_failed 子類)
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
                       "cost_sum": 0.0, "by_target": {},
@@ -504,6 +519,7 @@ class VECMultiEnv:
         self._active = []
         self._inflight = []       # 在途 V2V 任務(等完成時刻結算)
         self._settle_delta = 0.0  # 結算 vs 預測獎勵的差額(補進下一步團隊獎勵)
+        self._last_seen = {}      # vid -> 最後出現位置(離場車的優雅退場交接用)
         self._ep += 1
         self._reset_stats()
 
@@ -561,6 +577,7 @@ class VECMultiEnv:
                 "pred_reject": s["pred_reject"], "link_break": s["link_break"],
                 "break_recovered": s["break_recovered"],
                 "break_failed": s["break_failed"],
+                "consumer_left": s["consumer_left"],
                 "fallback": s["fallback"],
                 "by_target": dict(s["by_target"])}
 

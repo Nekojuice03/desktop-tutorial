@@ -139,6 +139,8 @@ check("帳務：fail = miss + infeasible + pred_reject + break_failed",
       + st["pred_reject"] + st["break_failed"])
 check("帳務：link_break = recovered + failed",
       s["link_break"] == s["break_recovered"] + s["break_failed"])
+check("帳務：consumer_left ⊆ break_failed",
+      s["consumer_left"] <= s["break_failed"])
 check("回合有實際處理任務(>200)", st["latency_n"] > 200, f"{st['latency_n']} 筆")
 env.close()
 
