@@ -25,8 +25,9 @@ import numpy as np
 
 from vec_env_ma import VECMultiEnv, SCRIPT_DIR
 
-COMBOS = [("linear", "fail"), ("linear", "v2i"),
-          ("route", "fail"), ("route", "v2i")]
+# 預判器消融階梯：naive(linear) → 可部署(kalman，僅 BSM 觀測) → oracle(route，意圖分享)
+COMBOS = [(p, r) for p in ("linear", "kalman", "route")
+          for r in ("fail", "v2i")]
 EVENT_KEYS = ("pred_reject", "link_break", "break_recovered", "break_failed",
               "consumer_left")
 
@@ -101,8 +102,8 @@ def main():
     print(f"=== 移動性機制消融（{tag}，每組 {episodes} 回合，"
           f"策略：{policies}）===")
     if not use_sumo:
-        print("（mock 無路線資訊：route 預判退化為 linear，兩者應相同 —— 屬設計驗證；"
-              "預判軸差異需在 SUMO 路口情境）")
+        print("（mock 無路線資訊：route 退化為 linear(設計驗證)；kalman 只用量測、"
+              "mock 也有效。route 軸與離場效應需在 SUMO 路口情境）")
 
     results = {}
     for pol in policies:
@@ -137,7 +138,8 @@ def main():
         sr = [results[k]["success"] for k in keys]
         sd = [results[k]["success_std"] for k in keys]
         axes[0].bar(labels, sr, yerr=sd, capsize=4,
-                    color=["#b0bec5", "#90caf9", "#64b5f6", "#1565c0"],
+                    color=["#cfd8dc", "#90a4ae", "#90caf9", "#42a5f5",
+                           "#1e88e5", "#0d47a1"][:len(keys)],
                     edgecolor="black", linewidth=0.6)
         axes[0].set_ylabel("Task Success Rate (%)")
         axes[0].set_title(f"Ablation: predictor × recovery ({pol}, {tag})")

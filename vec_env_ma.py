@@ -15,7 +15,10 @@ V2V 動作拆兩種，讓 agent 自己學「強但遠」vs「近但弱」的取�
 直接執行 `python vec_env_ma.py` 跑 mock 自我測試。
 """
 import os
+import math
 import numpy as np
+
+from kalman_tracker import EKFCTRV, predict_contact
 
 from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
                         neighbors_in_range, rsus_in_range, contact_time)
@@ -44,12 +47,16 @@ class VECMultiEnv:
                  arrival_rate=0.3, server_ratio=0.4, seed=0,
                  episode_ticks=200, rsus=None, mock_vehicles=24,
                  task_cpu_scale=1.0, task_deadline_scale=1.0,
-                 predictor="route", recovery="v2i"):
+                 predictor="kalman", recovery="v2i"):
         """
-        predictor：V2V 連線壽命預判器(消融用)
+        predictor：V2V 連線壽命預判器(消融階梯：naive → 可部署 → oracle)
           "linear" = 等速直線外推(baseline，路口轉彎會高估)
-          "route"  = 再疊加「路線分歧時間」(數位孿生已知路線 = V2X 意圖分享；
-                     SUMO 模式才有 route，mock 自動退回 linear)
+          "kalman" = 預設。EKF-CTRV 卡曼濾波：只用車輛本就廣播的 BSM/CAM
+                     可觀測量(位置/速度/航向)估計「轉彎率 ω」→ 預判對方
+                     會轉彎或維持同向(現實可部署；文獻: Kalman link
+                     residual lifetime, IEEE VTC 2016)
+          "route"  = 疊加「路線分歧+離場時間」(需 V2X 意圖分享=已知路線，
+                     oracle 上界；SUMO 模式才有 route，mock 退回 linear)
         recovery：V2V 任務在完成時刻「實際已斷線」時的恢復策略(消融用)
           "fail" = 直接失敗(最保守)
           "v2i"  = 結果經 V2I 遷移接續(執行車→RSU→持有車)，付遷移延遲/能耗
@@ -102,6 +109,12 @@ class VECMultiEnv:
         否則退回等速外推(linear baseline / mock)。觀測、決策、greedy 都走這裡，
         所以升級預判器時 agent 的 contact 特徵會同步變準。
         """
+        if self.predictor == "kalman":
+            # 可部署層：EKF-CTRV 前推(含轉彎率) → 預測連線壽命。
+            # 追蹤器未熱身(<3 筆量測)時退回等速外推。
+            ta, tb = self._trackers.get(a_id), self._trackers.get(b_id)
+            if ta is not None and tb is not None and ta.ready and tb.ready:
+                return predict_contact(ta, tb, V2V_RANGE_M)
         c = self._contact(a_id, a_pos, b_id, b_pos)
         if self.predictor == "route":
             t_div = self.world.route_divergence_time(a_id, b_id)
@@ -219,6 +232,18 @@ class VECMultiEnv:
         # 結算時若執行車已離場，用它離場前的位置做「優雅退場交接」(見 _settle_one)
         for vid, s in veh_states.items():
             self._last_seen[vid] = s["pos"]
+        # 卡曼追蹤：把每 tick 的 BSM 量測(位置/速度/航向)餵進各車的 EKF-CTRV
+        if self.predictor == "kalman":
+            dt = getattr(self.world, "dt", 1.0)
+            for vid, s in veh_states.items():
+                vx, vy = velocity_from_speed_angle(s["speed"], s["angle"])
+                theta = math.atan2(vy, vx)
+                tr = self._trackers.get(vid)
+                if tr is None:
+                    tr = self._trackers[vid] = EKFCTRV()
+                tr.step(s["pos"][0], s["pos"][1], s["speed"], theta, dt)
+            for vid in [v for v in self._trackers if v not in veh_states]:
+                del self._trackers[vid]   # 離場車清掉
         for vid in veh_states:
             if vid not in self.roles:
                 if is_server(vid, self.server_ratio):
@@ -520,6 +545,7 @@ class VECMultiEnv:
         self._inflight = []       # 在途 V2V 任務(等完成時刻結算)
         self._settle_delta = 0.0  # 結算 vs 預測獎勵的差額(補進下一步團隊獎勵)
         self._last_seen = {}      # vid -> 最後出現位置(離場車的優雅退場交接用)
+        self._trackers = {}       # vid -> EKF-CTRV 追蹤器(predictor="kalman")
         self._ep += 1
         self._reset_stats()
 

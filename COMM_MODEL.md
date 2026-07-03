@@ -76,10 +76,18 @@ delay = data_bits / rate(d)             ；d > 覆蓋半徑 → ∞(卸載失敗
 **移動性:兩層機制(預判 proactive + 恢復 reactive)** —— V2V 中途斷線的完整處理:
 
 *預判層(admission control)*:決策當下以預測的連線壽命 `contact_s` 檢查
-`總延遲 ≤ contact_s`,不足即拒絕(`pred_reject`)。預測器兩級(消融用,
-`VECMultiEnv(predictor=...)`):
+`總延遲 ≤ contact_s`,不足即拒絕(`pred_reject`)。預測器**三級階梯**
+(naive → 可部署 → oracle;消融用,`VECMultiEnv(predictor=...)`):
 - `"linear"`:等速直線外推(`comm_model.contact_time` 解析解)——路口轉彎會**高估**。
-- `"route"`(預設):再取 `min(直線外推, 離場時間, 路線分歧時間)`。由
+- `"kalman"`(**預設,現實可部署**):EKF-CTRV 卡曼濾波(`kalman_tracker.py`)。
+  **只用車輛本就廣播的 BSM/CAM 可觀測量**(位置/速度/航向,無需路線),
+  狀態 [x,y,v,θ,ω] 中的轉彎率 ω 由航向歷史濾波估出 → 前推兩車軌跡求
+  「距離首超通訊半徑」時刻 = 預測連線壽命(PLL)。**能預判對方正在轉彎或
+  維持同向**;ω 以半衰期 10s 衰減(轉彎為暫態)。回應「模擬知道路線、
+  現實怎麼辦」:數位孿生本就持續收 BSM/CAM,以 KF 追蹤是標準做法。
+  文獻:Kalman 預測 link residual lifetime(IEEE VTC 2016)、
+  VANET 位置預測(WPC 2014)、EKF 之 PLL 指標。
+- `"route"`(oracle 上界):再取 `min(直線外推, 離場時間, 路線分歧時間)`。由
   `TraciWorld.route_divergence_time()` 估計:
   (i) **離場時間**——任一車走完剩餘路線抵達終點就會離開模擬(SUMO 消融實測的
   斷線**主因**,而非開出範圍);紅燈停等以車道限速三成為速度下限。
@@ -143,6 +151,8 @@ cost = 運算量(cycles) × 每 cycle 單價     (cloud 2e-10 > rsu 5e-11 > loca
 ## 參考文獻
 - 3GPP TR 37.885, *Study on evaluation methodology of new V2X use cases for LTE and NR*（V2X 通道/路徑損耗模型）。
 - "Evaluating Link Lifetime Prediction to Support Computational Offloading Decision in VANETs," *Sensors* 22(16), 2022（連線壽命預測支援卸載決策；ML 預測降任務丟失 70–80%）。
+- "Prediction of link residual lifetime using Kalman filter in vehicular ad hoc networks," *IEEE VTC*, 2016（卡曼濾波預測連線殘餘壽命——kalman 預判器的直接依據）。
+- "Location Prediction of Vehicles in VANETs Using A Kalman Filter," *Wireless Personal Communications*, 2014（KF 車輛位置預測）。
 - "A bandwidth-fair migration-enabled task offloading for vehicular edge computing," *CCF TPCI*, 2024（斷線後任務遷移/服務連續性）。
 - "Vehicle Motion Prediction at Intersections Based on the Turning Intention and Prior Trajectories Model," *IEEE/CAA JAS*, 2021（路口轉向意圖辨識）。
 - SAE J2735（BSM Path Prediction）、ETSI EN 302 637-2（CAM path history）——V2X 意圖分享標準，route-aware 預判器的物理依據。
