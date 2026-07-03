@@ -8,6 +8,7 @@ __pycache__/
 dqn_vec.zip
 mappo_train_log.csv
 compare_results.json
+ablation_results.json
 # 比較圖(由 compare_and_plot.py 重新生成)
 fig_*.png
 
