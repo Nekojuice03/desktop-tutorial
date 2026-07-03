@@ -73,12 +73,29 @@ delay = data_bits / rate(d)             ；d > 覆蓋半徑 → ∞(卸載失敗
 ```
 排隊為 FIFO(車輛/RSU 有佇列,雲端無),見 `nodes.ComputeNodes`。
 
-**移動性約束(sojourn time constraint)**:每個卸載動作由環境計算來源與目標的
-連線可維持時間 `contact_s`(`comm_model.contact_time`,相對運動解析解),
-`estimate()` 檢查 `總延遲 ≤ contact_s`,否則判 **link_break 失敗** ——
-任務完成前車輛駛離通訊範圍。v2v 取兩車相對運動、rsu/cloud 取車對靜止基站、
-本地不檢查。這使觀測中的 contact 特徵真正影響獎勵,agent 有誘因學
-「別把任務丟給快離開的對象」(mobility-aware offloading 文獻標準作法)。
+**移動性:兩層機制(預判 proactive + 恢復 reactive)** —— V2V 中途斷線的完整處理:
+
+*預判層(admission control)*:決策當下以預測的連線壽命 `contact_s` 檢查
+`總延遲 ≤ contact_s`,不足即拒絕(`pred_reject`)。預測器兩級(消融用,
+`VECMultiEnv(predictor=...)`):
+- `"linear"`:等速直線外推(`comm_model.contact_time` 解析解)——路口轉彎會**高估**。
+- `"route"`(預設):再取 `min(直線外推, 路線分歧時間)`。路線分歧時間由
+  `TraciWorld.route_divergence_time()` 用兩車剩餘 route 的共同前綴長度/較快車速估計
+  ——物理上對應 **V2X 意圖分享**(SAE J2735 BSM Path Prediction、ETSI CAM path
+  history:車輛本就廣播預測路徑,數位孿生為其匯集點),非作弊。
+  文獻:link lifetime prediction 可將任務丟失/重做率降 70–80%(Sensors 2022)。
+
+*事件驅動結算*:V2V 任務不在決策當下拍板,而是掛到「預計完成時刻」,屆時用
+SUMO **真實位置**驗證兩車是否仍在範圍內 —— 預判失準(轉彎)就產生真實斷線
+(`link_break`)。RL 先收預測獎勵,結算差額補進後續 tick 的團隊獎勵(GAE 回傳信用)。
+
+*恢復層(service migration)*:真實斷線時(`VECMultiEnv(recovery=...)`):
+- `"v2i"`(預設):結果經基礎設施遷移 執行車→RSU→(有線)→RSU→持有車,
+  遷移延遲 = V2I 存取 + 兩段 V2I 傳輸,可能因此超時;救回計 `break_recovered`。
+- `"fail"`:直接失敗(`break_failed`);兩端任一側無 RSU 覆蓋時亦同。
+文獻:migration-enabled task offloading / service continuity(CCF TPCI 2024 等)。
+
+rsu/cloud 目標為靜止基站,仍用等速外推的 sojourn 檢查;本地不檢查。
 
 **異質車輛能耗(DVFS κf²)**:強車為多核聚合 12 GHz(如 8核×1.5GHz),
 依 E/cycle ∝ κf²(以單核頻率計)其每 cycle 能耗 = (1.5/1.0)² = 2.25× 弱車
@@ -118,6 +135,11 @@ cost = 運算量(cycles) × 每 cycle 單價     (cloud 2e-10 > rsu 5e-11 > loca
 
 ## 參考文獻
 - 3GPP TR 37.885, *Study on evaluation methodology of new V2X use cases for LTE and NR*（V2X 通道/路徑損耗模型）。
+- "Evaluating Link Lifetime Prediction to Support Computational Offloading Decision in VANETs," *Sensors* 22(16), 2022（連線壽命預測支援卸載決策；ML 預測降任務丟失 70–80%）。
+- "A bandwidth-fair migration-enabled task offloading for vehicular edge computing," *CCF TPCI*, 2024（斷線後任務遷移/服務連續性）。
+- "Vehicle Motion Prediction at Intersections Based on the Turning Intention and Prior Trajectories Model," *IEEE/CAA JAS*, 2021（路口轉向意圖辨識）。
+- SAE J2735（BSM Path Prediction）、ETSI EN 302 637-2（CAM path history）——V2X 意圖分享標準，route-aware 預判器的物理依據。
+- Yu et al., "The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games," NeurIPS 2022（MAPPO）。
 - H. Ye et al., "Intelligent Task Offloading for Heterogeneous V2X Communications," arXiv:2006.15855（DSRC/C-V2X/mmWave 異質 V2X 卸載）。
 - X. Huang et al., "Joint Task Offloading and Resource Allocation for Vehicular Edge Computing Based on V2I and V2V Modes," *IEEE T-ITS*, 2022.
 - Vehicular Edge Computing 綜述, arXiv:1908.06849（車—邊—雲三層架構、RSU↔雲光纖回程）。

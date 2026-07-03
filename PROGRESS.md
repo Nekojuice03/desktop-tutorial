@@ -42,7 +42,12 @@
 成本  = 運算量 × 執行節點單價(雲 > 邊 > 本地/V2V=0)
 ```
 - **佇列**：車輛/RSU 為 FIFO(busy_until)，雲端無佇列；回程為 100Mbps 共享 FIFO
-- **移動性約束**：總延遲 > 連線可維持時間(contact_time) → `link_break` 失敗
+- **移動性(兩層)**：
+  - 預判層：`predictor="linear"|"route"`(route=用 SUMO 路線估分歧時間=V2X 意圖分享)，
+    預測斷線 → 拒卸載(`pred_reject`)
+  - 事件驅動結算：V2V 到「完成時刻」用真實位置驗證 → 預判失準產生真實 `link_break`
+  - 恢復層：`recovery="v2i"|"fail"`(v2i=結果經 RSU 遷移接續,`break_recovered`)
+  - 消融四組合：linear/route × fail/v2i(詳見 COMM_MODEL.md 第四節)
 
 ### 演算法（mappo.py）
 GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick 各 agent 平均。

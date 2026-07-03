@@ -91,6 +91,47 @@ class TraciWorld:
         self.done = t.simulation.getMinExpectedNumber() <= 0
         return now, states
 
+    def route_divergence_time(self, a, b):
+        """
+        兩車依「已知路線」還會同路多久(秒)；資訊不足回 None(呼叫端退回等速外推)。
+        物理意涵：模擬 V2X 意圖分享(SAE J2735 BSM Path Prediction / ETSI CAM path
+        history)——車輛廣播自己的預測路徑，數位孿生匯集後即可預判兩車何時分道
+        (轉彎/岔路)，比等速直線外推準確(直線外推在路口會系統性高估 contact)。
+        做法：取兩車剩餘 route 的共同前綴長度(公尺)，除以較快者速度(保守)。
+        """
+        t = self._t
+        try:
+            ra = t.vehicle.getRoute(a); ia = max(t.vehicle.getRouteIndex(a), 0)
+            rb = t.vehicle.getRoute(b); ib = max(t.vehicle.getRouteIndex(b), 0)
+            fa, fb = list(ra[ia:]), list(rb[ib:])
+            if not fa or not fb:
+                return None
+            # 對齊：允許一車稍前(其當前邊出現在另一車最近的未來三條邊)
+            if fa[0] != fb[0]:
+                if fb[0] in fa[:3]:
+                    fa = fa[fa.index(fb[0]):]
+                elif fa[0] in fb[:3]:
+                    fb = fb[fb.index(fa[0]):]
+                else:
+                    return None    # 不同路且不相接 → 無路線資訊可用
+            # 共同前綴總長，第一條共同邊扣掉已駛過的部分(取兩車較大者，保守)
+            shared = 0.0
+            for i in range(min(len(fa), len(fb))):
+                if fa[i] != fb[i]:
+                    break
+                length = t.lane.getLength(fa[i] + "_0")
+                if i == 0:
+                    pos = 0.0
+                    for vid in (a, b):
+                        if t.vehicle.getRoadID(vid) == fa[0]:
+                            pos = max(pos, t.vehicle.getLanePosition(vid))
+                    length = max(0.0, length - pos)
+                shared += length
+            v = max(t.vehicle.getSpeed(a), t.vehicle.getSpeed(b), 0.1)
+            return shared / v      # 較快者先走完共同路段 → 保守估計
+        except Exception:
+            return None
+
     def close(self):
         try:
             if self._t is not None and self._t.isLoaded():
@@ -136,6 +177,10 @@ class MockWorld:
                                  "speed": abs(self.vx[i]), "angle": angle}
         self.done = False
         return float(self.t), states
+
+    def route_divergence_time(self, a, b):
+        """Mock 車流沒有路線資訊 → None(呼叫端退回等速外推)。"""
+        return None
 
     def close(self):
         pass
