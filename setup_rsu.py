@@ -49,6 +49,8 @@ ROADSIDE_MARGIN  = 5       # 推到路邊時，超出車道外緣的距離(公�
 
 def parse_args():
     p = argparse.ArgumentParser(description="自適應 RSU 佈點")
+    p.add_argument("--net", type=str, default=None,
+                   help="指定路網檔(如 new.net.xml)；不給則自動搜尋")
     p.add_argument("--num", type=int, default=None,
                    help="強制剛好放 N 個(給定時關閉自適應)")
     p.add_argument("--target", type=float, default=TARGET_COVERAGE,
@@ -171,7 +173,10 @@ def greedy_cover(coords, samples, radius, target, min_gain_frac, max_rsu, force_
 def main():
     args = parse_args()
 
-    NET_FILE = find_net_file()
+    NET_FILE = args.net or find_net_file()
+    if NET_FILE and not os.path.isfile(NET_FILE):
+        print(f"指定的路網檔不是有效檔案：{NET_FILE}（注意舊專案的 osm.net.xml 是資料夾）")
+        sys.exit(1)
     if NET_FILE is None:
         print("找不到路網檔（*.net.xml 或 *.net.xml.gz）。此資料夾內容：")
         for fn in sorted(os.listdir(".")):
