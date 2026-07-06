@@ -64,14 +64,50 @@ def fetch_gz(url, timeout=30):
 # ---------- 1. 靜態清單：找出範圍內的 VD ----------
 def parse_static_vds(text):
     """
-    寬鬆解析 VD 靜態清單：走訪所有元素，凡是「有 DeviceID 子欄位 +
-    兩個落在台灣經緯度範圍的數值欄位」就視為一台 VD。
-    (容忍不同 schema：Px/Py、Longitude/Latitude、PositionLon/PositionLat…)
+    解析 VD 位置清單。優先支援台北交控中心 GetVD.xml 的真實 schema：
+      <vd:SectionData><vd:SectionId>ZVCGQ40</vd:SectionId>
+        <vd:StartWgsX>121.50</..><vd:StartWgsY>25.12</..>
+        <vd:EndWgsX>…</..><vd:EndWgsY>…</..></vd:SectionData>
+    位置取路段起訖點的「中點」。解析不到再退回泛用啟發式。
     """
     if not text.lstrip().startswith("<?xml"):
         text = '<?xml version="1.0" encoding="utf-8"?>\n<root>\n' + text + "\n</root>"
     root = ET.fromstring(text)
+
+    def fnum(v):
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    # ---- 格式A：SectionData + Start/End WGS84(實測台北 GetVD.xml)----
     vds = {}
+    for sec in root.iter():
+        if not sec.tag.split("}")[-1] == "SectionData":
+            continue
+        sid = sx = sy = ex = ey = None
+        for child in sec:
+            tag = child.tag.split("}")[-1]
+            val = (child.text or "").strip()
+            if tag == "SectionId":
+                sid = val
+            elif tag == "StartWgsX":
+                sx = fnum(val)
+            elif tag == "StartWgsY":
+                sy = fnum(val)
+            elif tag == "EndWgsX":
+                ex = fnum(val)
+            elif tag == "EndWgsY":
+                ey = fnum(val)
+        if sid and sx and sy:
+            lon = (sx + ex) / 2 if ex else sx     # 路段中點
+            lat = (sy + ey) / 2 if ey else sy
+            if 118.0 < lon < 124.0 and 21.0 < lat < 26.5:
+                vds[sid] = (lon, lat)
+    if vds:
+        return vds
+
+    # ---- 格式B：泛用啟發式(DeviceID/VDID + 台灣範圍內的經緯度欄位)----
     for elem in root.iter():
         dev = None
         lon = lat = None
@@ -81,9 +117,8 @@ def parse_static_vds(text):
             if tag in ("deviceid", "vdid", "id") and val and dev is None:
                 dev = val
             else:
-                try:
-                    x = float(val)
-                except (ValueError, TypeError):
+                x = fnum(val)
+                if x is None:
                     continue
                 if 118.0 < x < 124.0:
                     lon = x
@@ -280,6 +315,16 @@ def main():
         write_debug_pois(vd_xy)
         print("★請開 sumo-gui 校對：sumo-gui -n", args.net,
               "-a vd_debug.add.xml,rsu.add.xml")
+
+    # ★關鍵診斷：靜態清單(SectionId)與即時車道資料(DeviceID)是兩套來源，
+    #   確認範圍內的站有幾台真的查得到 Svolume(對不上=兩套 ID 需另接橋)。
+    devs = {r["DeviceID"] for r in rows}
+    have = sorted(d for d in devs if d in sv)
+    print(f"對應表 {len(devs)} 站中，查得到即時車道資料(Svolume)者 {len(have)} 站"
+          + (f"：{have}" if have else ""))
+    if not have:
+        print("[診斷] 範圍內各站 ID 在即時資料(GetVDDATA)中都查不到——"
+              "靜態 SectionId 與即時 DeviceID 可能是兩套編號。請把本輸出貼回。")
 
     if args.map_only:
         return
