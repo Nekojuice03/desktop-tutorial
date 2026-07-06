@@ -86,11 +86,14 @@ def parse_static_vds(text):
         if not sec.tag.split("}")[-1] == "SectionData":
             continue
         sid = sx = sy = ex = ey = vol = None
+        name = ""
         for child in sec:
             tag = child.tag.split("}")[-1]
             val = (child.text or "").strip()
             if tag == "SectionId":
                 sid = val
+            elif tag == "SectionName":
+                name = " ".join(val.split())      # 路段名稱(可判讀路名與方向)
             elif tag == "StartWgsX":
                 sx = fnum(val)
             elif tag == "StartWgsY":
@@ -105,7 +108,7 @@ def parse_static_vds(text):
             lon = (sx + ex) / 2 if ex else sx     # 路段中點
             lat = (sy + ey) / 2 if ey else sy
             if 118.0 < lon < 124.0 and 21.0 < lat < 26.5:
-                vds[sid] = (lon, lat, vol)        # vol=該路段即時 TotalVol(輛/5分)
+                vds[sid] = (lon, lat, vol, name)  # vol=即時 TotalVol(輛/5分)
     if vds:
         return vds
 
@@ -127,7 +130,7 @@ def parse_static_vds(text):
                 elif 21.0 < x < 26.5:
                     lat = x
         if dev and lon is not None and lat is not None:
-            vds[dev] = (lon, lat, None)
+            vds[dev] = (lon, lat, None, "")
     return vds
 
 
@@ -135,10 +138,10 @@ def vds_in_net(vds, net, margin=30.0):
     """篩出落在路網邊界(外擴 margin 公尺)內的 VD，回傳 {dev:(x,y,lon,lat,vol)}。"""
     xmin, ymin, xmax, ymax = net.getBoundary()
     keep = {}
-    for dev, (lon, lat, vol) in vds.items():
+    for dev, (lon, lat, vol, name) in vds.items():
         x, y = net.convertLonLat2XY(lon, lat)
         if xmin - margin <= x <= xmax + margin and ymin - margin <= y <= ymax + margin:
-            keep[dev] = (x, y, lon, lat, vol)
+            keep[dev] = (x, y, lon, lat, vol, name)
     return keep
 
 
@@ -147,25 +150,48 @@ def map_vd_to_edges(net, vd_xy, live_lanes, search_r=60.0):
     """
     每台 VD 對到最近的可通行 edge；每個實際回報的 LaneNO 給一列
     (departLane 夾在該 edge 車道數內)。回傳 list of dict(CSV 列)。
+    ★同一條 edge 被多站對到時(長路上一串量測路段)，只保留「最上游」
+      的一站(離 edge 起點最近)——flow 從 edge 起點注入，多站同 edge 會把
+      同一批車重複灌好幾倍(復興南路實測三站疊同 edge → 流量 3 倍)。
     """
-    rows = []
-    for dev, (x, y, lon, lat, _vol) in sorted(vd_xy.items()):
+    picked = {}   # edge_id -> (dist_to_edge_start, dev, x, y, name, edge)
+    for dev, (x, y, lon, lat, _vol, name) in sorted(vd_xy.items()):
         cands = net.getNeighboringEdges(x, y, search_r)
         cands = [(e, d) for e, d in cands
                  if e.allows("passenger") and not e.getID().startswith(":")]
         if not cands:
-            print(f"  [略過] {dev}：{search_r}m 內無可通行 edge")
+            # 印出名稱與更大範圍的最近距離，方便判斷這站量的是哪條路、為何被略過
+            far = net.getNeighboringEdges(x, y, 200.0)
+            far = [(e, d) for e, d in far
+                   if e.allows("passenger") and not e.getID().startswith(":")]
+            far.sort(key=lambda p: p[1])
+            hint = (f"最近 edge {far[0][0].getID()} 在 {far[0][1]:.0f}m 外"
+                    if far else "200m 內也無 edge(不在本路網的路)")
+            print(f"  [略過] {dev}「{name}」：{search_r}m 內無可通行 edge({hint})")
             continue
         cands.sort(key=lambda p: p[1])
         edge = cands[0][0]
+        d0 = math.dist((x, y), edge.getShape()[0])   # 離 edge 起點(上游)距離
+        cur = picked.get(edge.getID())
+        if cur is None or d0 < cur[0]:
+            if cur is not None:
+                print(f"  [去重] edge {edge.getID()} 已有 {cur[1]}，"
+                      f"{dev}「{name}」較上游 → 改用 {dev}")
+            picked[edge.getID()] = (d0, dev, x, y, name, edge)
+        else:
+            print(f"  [去重] {dev}「{name}」與 {cur[1]} 同對 edge "
+                  f"{edge.getID()} 且較下游 → 略過(避免同批車重複計量)")
+
+    rows = []
+    for eid, (d0, dev, x, y, name, edge) in sorted(picked.items()):
         n_lane = edge.getLaneNumber()
         lanes = sorted(live_lanes.get(dev, {0}))
         for ln in lanes:
             rows.append({"DeviceID": dev, "LaneNO": ln,
-                         "SumoEdgeID": edge.getID(),
+                         "SumoEdgeID": eid, "SectionName": name,
                          "departLane": min(int(ln), n_lane - 1)})
-        print(f"  {dev} @({x:.0f},{y:.0f}) → edge {edge.getID()} "
-              f"(距離 {cands[0][1]:.0f}m，{n_lane} 車道，VD 車道 {lanes})")
+        print(f"  {dev}「{name}」@({x:.0f},{y:.0f}) → edge {eid} "
+              f"({n_lane} 車道，VD 車道 {lanes})")
     return rows
 
 
@@ -327,8 +353,8 @@ def main():
         lanes_of = {d: (set(sv[d].keys()) if d in sv else {0}) for d in vd_xy}
         rows = map_vd_to_edges(net, vd_xy, lanes_of)
         with open(MAPPING_CSV, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["DeviceID", "LaneNO",
-                                              "SumoEdgeID", "departLane"])
+            w = csv.DictWriter(f, fieldnames=["DeviceID", "LaneNO", "SumoEdgeID",
+                                              "SectionName", "departLane"])
             w.writeheader()
             w.writerows(rows)
         print(f"對應表已存 {MAPPING_CSV}(共 {len(rows)} 列)")
