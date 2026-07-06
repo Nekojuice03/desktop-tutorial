@@ -22,3 +22,5 @@ cal_*_output.xml
 # Claude 本地設定(個人權限，不入庫)
 .claude/settings.local.json
 rsu_layout.png
+vd_debug.add.xml
+real_traffic_hep.rou.xml
