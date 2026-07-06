@@ -172,6 +172,9 @@ def write_routes(net, mapping_rows, sv, ti, out=OUT_ROUTE, end=3600):
     skipped = 0
     for row in mapping_rows:
         dev, ln = row["DeviceID"], int(row["LaneNO"])
+        if not net.hasEdge(row.get("SumoEdgeID", "")):
+            skipped += 1        # 對應表殘留別路網的 edge → 跳過不 crash
+            continue
         s = sv.get(dev, {}).get(ln)
         if s is None or s <= 0:
             skipped += 1
@@ -231,12 +234,24 @@ def main():
     sv, ti = parse_live_svolume(live_text)
     print(f"車流資料：{len(sv)} 台 VD(全市)")
 
-    # 對應表：已有就沿用(保住手工修正)，否則自動建立
+    # 對應表：已有「且屬於本路網」就沿用(保住手工修正)，否則自動建立。
+    # ★關鍵防呆：舊專案的 CSV 是別的路網(如新生南路)做的，其 edge 不在
+    #   本路網 → 自動視為需要重建，避免 KeyError。
+    rows = None
     if os.path.exists(MAPPING_CSV) and not args.remap and not args.map_only:
         with open(MAPPING_CSV, encoding="utf-8-sig") as f:
             rows = [r for r in csv.DictReader(f)]
-        print(f"沿用既有 {MAPPING_CSV}({len(rows)} 列)；要重建請加 --remap")
-    else:
+        n_valid = sum(1 for r in rows if net.hasEdge(r.get("SumoEdgeID", "")))
+        if n_valid == 0:
+            print(f"既有 {MAPPING_CSV}({len(rows)} 列)的 edge 全部不在本路網"
+                  f"(應為舊路網的對應表) → 自動重新對應")
+            rows = None
+        else:
+            if n_valid < len(rows):
+                print(f"[警告] {MAPPING_CSV} 有 {len(rows)-n_valid} 列 edge 不在本路網，將略過")
+            print(f"沿用既有 {MAPPING_CSV}({len(rows)} 列，{n_valid} 列有效)；"
+                  f"要重建請加 --remap")
+    if rows is None:
         static_text = (open(args.static, encoding="utf-8").read() if args.static
                        else fetch_gz(STATIC_VD_URL))
         vds = parse_static_vds(static_text)
