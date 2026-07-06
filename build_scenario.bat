@@ -18,8 +18,8 @@ python "%SUMO_HOME%\tools\randomTrips.py" -n "%NET%" -r scenario.rou.xml ^
   -e 3600 -p %PERIOD% --fringe-factor 5 --validate --seed 42
 if errorlevel 1 ( echo [失敗] randomTrips 出錯 & exit /b 1 )
 
-echo === 2/3 佈署邊緣基站 RSU(自適應) ===
-python setup_rsu.py --net "%NET%"
+echo === 2/3 佈署邊緣基站 RSU(路口四角+路肩補洞) ===
+python setup_rsu.py --net "%NET%" --mode junction --corners 2 --plot
 if errorlevel 1 ( echo [失敗] setup_rsu 出錯 & exit /b 1 )
 
 echo === 3/3 產生 osm.sumocfg(綁定 網路+車流+RSU) ===

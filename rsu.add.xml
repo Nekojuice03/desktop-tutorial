@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <additional>
-    <poi id="rsu_0" x="215.16" y="266.89" type="RSU" color="0,0,255" layer="200"/>
-    <poi id="rsu_1" x="331.30" y="247.54" type="RSU" color="0,0,255" layer="200"/>
-    <poi id="rsu_2" x="231.75" y="0.17" type="RSU" color="0,0,255" layer="200"/>
+    <poi id="rsu_0" x="345.16" y="476.56" type="RSU_corner" color="255,140,0" layer="200"/>
+    <poi id="rsu_1" x="320.25" y="428.38" type="RSU_corner" color="255,140,0" layer="200"/>
+    <poi id="rsu_2" x="507.21" y="418.17" type="RSU_corner" color="255,140,0" layer="200"/>
+    <poi id="rsu_3" x="491.71" y="469.89" type="RSU_corner" color="255,140,0" layer="200"/>
+    <poi id="rsu_4" x="635.63" y="394.25" type="RSU_corner" color="255,140,0" layer="200"/>
+    <poi id="rsu_5" x="585.47" y="446.29" type="RSU_corner" color="255,140,0" layer="200"/>
+    <poi id="rsu_6" x="462.68" y="169.10" type="RSU_shoulder" color="0,0,255" layer="200"/>
+    <poi id="rsu_7" x="289.29" y="868.07" type="RSU_shoulder" color="0,0,255" layer="200"/>
 </additional>
