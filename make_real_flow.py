@@ -256,6 +256,14 @@ def main():
                        else fetch_gz(STATIC_VD_URL))
         vds = parse_static_vds(static_text)
         print(f"靜態清單：{len(vds)} 台 VD(全市)")
+        if not vds:
+            # 自我診斷：格式與預期不符 → 存檔並印出開頭，方便對照真實 schema
+            with open("vd_static_dump.xml", "w", encoding="utf-8") as f:
+                f.write(static_text)
+            print("[診斷] 解析不到任何含座標的 VD。原始內容已存 vd_static_dump.xml，"
+                  "開頭如下：")
+            print(static_text[:800])
+            sys.exit(1)
         vd_xy = vds_in_net(vds, net)
         print(f"落在本路網範圍內：{len(vd_xy)} 台 → 開始對應 edge")
         if not vd_xy:
