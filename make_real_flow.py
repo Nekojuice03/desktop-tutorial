@@ -304,7 +304,8 @@ def main():
         if not vd_xy:
             print("範圍內找不到 VD——請確認靜態清單有座標欄位，或路網範圍。")
             sys.exit(1)
-        lanes_of = {d: set(sv.get(d, {0}).keys()) for d in vd_xy}
+        # 該站在即時資料查不到車道時，先給單一車道 0(之後診斷會顯示對不上的站)
+        lanes_of = {d: (set(sv[d].keys()) if d in sv else {0}) for d in vd_xy}
         rows = map_vd_to_edges(net, vd_xy, lanes_of)
         with open(MAPPING_CSV, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=["DeviceID", "LaneNO",
