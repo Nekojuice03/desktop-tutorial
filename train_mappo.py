@@ -49,7 +49,7 @@ def collect(env, algo, n_ticks, carry):
             obs, state = env.reset()
         else:
             obs, state = next_obs, next_state
-    last_value = 0.0 if ticks[-1]["done"] else algo.value(state)
+    last_value = 0.0 if ticks[-1]["done"] else algo.value_from(obs, state)
     return ticks, (obs, state), last_value
 
 
@@ -106,12 +106,18 @@ def main():
         cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                    episode_ticks=150, task_cpu_scale=1.0)
 
+    # --ippo：IPPO 消融(critic 只看局部觀測，無全域資訊；其餘完全相同)
+    ippo = "--ippo" in sys.argv
+    algo_name = "IPPO" if ippo else "MAPPO"
+    model_out = "ippo_vec.pt" if ippo else "mappo_vec.pt"
+    log_name = "mappo_train_log_ippo.csv" if ippo else "mappo_train_log.csv"
+
     env = VECMultiEnv(**cfg)
     # 獨立的評估環境(同設定，但種子由 EVAL_SEEDS 固定，與訓練環境互不干擾)
     eval_env = VECMultiEnv(**cfg)
     algo = MAPPO(obs_dim=env.n_features, state_dim=env.state_dim,
-                 n_actions=env.n_actions)
-    print(f"訓練環境：{'SUMO' if use_sumo else 'mock 壓力情境'}，"
+                 n_actions=env.n_actions, central_critic=not ippo)
+    print(f"演算法：{algo_name}｜訓練環境：{'SUMO' if use_sumo else 'mock 壓力情境'}，"
           f"觀測{env.n_features} 全域狀態{env.state_dim} 動作{ACTIONS}\n")
 
     print("訓練前(未學習)評估：")
@@ -120,7 +126,7 @@ def main():
           f"能耗 {m0['en']:.3f}J，成本 {m0['cost']:.4f}，分布 {m0['dist']}\n")
 
     # 收斂曲線記錄(供 compare_and_plot 畫圖)：多指標
-    log_path = os.path.join(SCRIPT_DIR, "mappo_train_log.csv")
+    log_path = os.path.join(SCRIPT_DIR, log_name)
     log_rows = [(0, m0["sr"], m0["vis"], m0["lat"], m0["en"], m0["cost"])]
 
     carry = env.reset()
@@ -156,10 +162,10 @@ def main():
         f.write("iter,success_rate,vision_success_rate,avg_latency_ms,avg_energy_j,avg_cost\n")
         for it, sr, vis, lat, en, cost in log_rows:
             f.write(f"{it},{sr:.2f},{vis:.2f},{lat:.1f},{en:.4f},{cost:.5f}\n")
-    print(f"收斂紀錄已存成 mappo_train_log.csv")
+    print(f"收斂紀錄已存成 {log_name}")
 
-    algo.save("mappo_vec.pt")
-    print("\n模型已存成 mappo_vec.pt")
+    algo.save(model_out)
+    print(f"\n模型已存成 {model_out}")
     env.close()
     eval_env.close()
 

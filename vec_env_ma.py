@@ -47,7 +47,7 @@ class VECMultiEnv:
                  arrival_rate=0.3, server_ratio=0.4, seed=0,
                  episode_ticks=200, rsus=None, mock_vehicles=24,
                  task_cpu_scale=1.0, task_deadline_scale=1.0,
-                 predictor="kalman", recovery="v2i"):
+                 predictor="kalman", recovery="v2i", obs_delay=0):
         """
         predictor：V2V 連線壽命預判器(消融階梯：naive → 可部署 → oracle)
           "linear" = 等速直線外推(baseline，路口轉彎會高估)
@@ -60,10 +60,15 @@ class VECMultiEnv:
         recovery：V2V 任務在完成時刻「實際已斷線」時的恢復策略(消融用)
           "fail" = 直接失敗(最保守)
           "v2i"  = 結果經 V2I 遷移接續(執行車→RSU→持有車)，付遷移延遲/能耗
+        obs_delay：★數位孿生同步延遲 τ(tick)。孿生收到的車輛動態(BSM 位置/
+          速度/航向)比物理世界舊 τ 秒 → 預判器與 contact 觀測特徵都吃舊資料；
+          物理結算(真實位置驗證)不受影響。τ=0 為完美同步(預設，行為不變)。
+          用途：量化 DT 同步性需求(run_dt_delay.py 掃描)。
         """
         self.mock = mock
         self.predictor = predictor
         self.recovery = recovery
+        self.obs_delay = int(obs_delay)
         self.gui = gui
         self.cfg = cfg
         self.arrival_rate = arrival_rate
@@ -93,13 +98,21 @@ class VECMultiEnv:
         self.world = None
         self._ep = 0
 
-    # ---------- 連線維持時間小工具 ----------
+    # ---------- 連線維持時間小工具(讀「孿生視角」twin_states，受 τ 影響) ----------
     def _contact(self, holder_id, holder_pos, nb_id, nb_pos):
-        hv = velocity_from_speed_angle(self.veh_states[holder_id]["speed"],
-                                       self.veh_states[holder_id]["angle"]) \
-            if holder_id in self.veh_states else (0.0, 0.0)
-        nv = velocity_from_speed_angle(self.veh_states[nb_id]["speed"],
-                                       self.veh_states[nb_id]["angle"])
+        ts = self.twin_states
+        if holder_id in ts:
+            h = ts[holder_id]
+            holder_pos = h["pos"]
+            hv = velocity_from_speed_angle(h["speed"], h["angle"])
+        else:
+            hv = (0.0, 0.0)
+        if nb_id in ts:
+            n = ts[nb_id]
+            nb_pos = n["pos"]
+            nv = velocity_from_speed_angle(n["speed"], n["angle"])
+        else:
+            nv = (0.0, 0.0)
         return contact_time(holder_pos, hv, nb_pos, nv, V2V_RANGE_M)
 
     def _pair_contact(self, a_id, a_pos, b_id, b_pos):
@@ -114,7 +127,9 @@ class VECMultiEnv:
             # 追蹤器未熱身(<3 筆量測)時退回等速外推。
             ta, tb = self._trackers.get(a_id), self._trackers.get(b_id)
             if ta is not None and tb is not None and ta.ready and tb.ready:
-                return predict_contact(ta, tb, V2V_RANGE_M)
+                # lead=τ：孿生知道量測舊了 τ 秒 → dead-reckon 前推補償(DT 的實質貢獻)
+                lead = self.obs_delay * getattr(self.world, "dt", 1.0)
+                return predict_contact(ta, tb, V2V_RANGE_M, lead=lead)
         c = self._contact(a_id, a_pos, b_id, b_pos)
         if self.predictor == "route":
             t_div = self.world.route_divergence_time(a_id, b_id)
@@ -131,16 +146,17 @@ class VECMultiEnv:
         if kind in ("v2v_strong", "v2v_near"):
             return self._pair_contact(ctx["holder_id"], ctx["holder_pos"], tid, tpos)
         if kind in ("rsu", "cloud"):
-            # V2I 與 V2V 同一套預判階梯(對稱，避免偏袒基礎設施)：
+            # V2I 與 V2V 同一套預判階梯(對稱)；動態一律取孿生視角(受 τ 影響)
             if self.predictor == "kalman":
                 tr = self._trackers.get(ctx["holder_id"])
                 if tr is not None and tr.ready:
-                    return predict_contact_static(tr, tpos, RSU_RANGE_M)
-            hv = velocity_from_speed_angle(
-                self.veh_states[ctx["holder_id"]]["speed"],
-                self.veh_states[ctx["holder_id"]]["angle"]) \
-                if ctx["holder_id"] in self.veh_states else (0.0, 0.0)
-            c = contact_time(ctx["holder_pos"], hv, tpos, (0.0, 0.0), RSU_RANGE_M)
+                    lead = self.obs_delay * getattr(self.world, "dt", 1.0)
+                    return predict_contact_static(tr, tpos, RSU_RANGE_M, lead=lead)
+            hs = self.twin_states.get(ctx["holder_id"])
+            hpos = hs["pos"] if hs else ctx["holder_pos"]
+            hv = (velocity_from_speed_angle(hs["speed"], hs["angle"])
+                  if hs else (0.0, 0.0))
+            c = contact_time(hpos, hv, tpos, (0.0, 0.0), RSU_RANGE_M)
             if self.predictor == "route":
                 t_exit = self.world.route_exit_time(ctx["holder_id"])
                 if t_exit is not None:
@@ -238,22 +254,27 @@ class VECMultiEnv:
         now, veh_states = self.world.step()
         self.now = now
         self.veh_states = veh_states
+        # ★孿生視角：DT 收到的 BSM 比物理世界舊 obs_delay 秒。
+        #   決策側(預判/contact 特徵/KF 量測)一律讀 twin_states；
+        #   物理側(任務指派距離、結算真實位置、優雅退場)讀 veh_states。
+        self._hist.append(veh_states)
+        self.twin_states = self._hist[0]   # deque(maxlen=τ+1) 最舊者=τ 秒前
         # 記住每台車最後出現的位置：車輛抵達終點會從模擬消失(despawn)，
         # 結算時若執行車已離場，用它離場前的位置做「優雅退場交接」(見 _settle_one)
         for vid, s in veh_states.items():
             self._last_seen[vid] = s["pos"]
-        # 卡曼追蹤：把每 tick 的 BSM 量測(位置/速度/航向)餵進各車的 EKF-CTRV
+        # 卡曼追蹤：把「孿生收到的」BSM 量測餵進各車的 EKF-CTRV(受 τ 影響)
         if self.predictor == "kalman":
             dt = getattr(self.world, "dt", 1.0)
-            for vid, s in veh_states.items():
+            for vid, s in self.twin_states.items():
                 vx, vy = velocity_from_speed_angle(s["speed"], s["angle"])
                 theta = math.atan2(vy, vx)
                 tr = self._trackers.get(vid)
                 if tr is None:
                     tr = self._trackers[vid] = EKFCTRV()
                 tr.step(s["pos"][0], s["pos"][1], s["speed"], theta, dt)
-            for vid in [v for v in self._trackers if v not in veh_states]:
-                del self._trackers[vid]   # 離場車清掉
+            for vid in [v for v in self._trackers if v not in self.twin_states]:
+                del self._trackers[vid]   # 孿生視角中已離場的車清掉
         for vid in veh_states:
             if vid not in self.roles:
                 if is_server(vid, self.server_ratio):
@@ -604,6 +625,9 @@ class VECMultiEnv:
         self._settle_delta = 0.0  # 結算 vs 預測獎勵的差額(補進下一步團隊獎勵)
         self._last_seen = {}      # vid -> 最後出現位置(離場車的優雅退場交接用)
         self._trackers = {}       # vid -> EKF-CTRV 追蹤器(predictor="kalman")
+        from collections import deque
+        self._hist = deque(maxlen=self.obs_delay + 1)   # 孿生延遲 τ 的狀態緩衝
+        self.twin_states = {}
         self._ep += 1
         self._reset_stats()
 

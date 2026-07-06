@@ -118,14 +118,32 @@ class EKFCTRV:
         return px, py
 
 
-def predict_contact(tr_a, tr_b, comm_range, horizon=60.0, dt=0.5):
+def _lead_state(tr, lead, dt=0.5):
+    """
+    ★延遲補償(dead reckoning)：孿生知道量測已舊 lead 秒 → 把估計狀態
+    依 CTRV 前推 lead 秒到「現在」。這是 DT 對同步延遲的實質補償機制——
+    等速外推(linear)沒有這一步，所以 τ 越大 kalman 相對優勢越明顯。
+    """
+    s = list(tr.x)
+    if lead <= 0:
+        return s
+    decay = 0.5 ** (dt / OMEGA_HALF_LIFE_S)
+    t = 0.0
+    while t < lead:
+        s = list(_ctrv_step(*s, dt)); s[4] *= decay
+        t += dt
+    return s
+
+
+def predict_contact(tr_a, tr_b, comm_range, horizon=60.0, dt=0.5, lead=0.0):
     """
     兩台已追蹤車輛的「預測連線壽命」(秒)：把兩車 CTRV 前推，
     回傳距離首次超過 comm_range 的時刻；期間都在範圍內 → horizon。
     ω 以半衰期衰減(轉彎為暫態，避免預測出永久繞圈)。
+    lead：量測時效(孿生同步延遲)，先 dead-reckon 前推到現在再算 contact。
     """
-    a = list(tr_a.x)
-    b = list(tr_b.x)
+    a = _lead_state(tr_a, lead, dt)
+    b = _lead_state(tr_b, lead, dt)
     decay = 0.5 ** (dt / OMEGA_HALF_LIFE_S)
     if math.dist(a[:2], b[:2]) > comm_range:
         return 0.0
@@ -139,13 +157,14 @@ def predict_contact(tr_a, tr_b, comm_range, horizon=60.0, dt=0.5):
     return horizon
 
 
-def predict_contact_static(tr, point, comm_range, horizon=60.0, dt=0.5):
+def predict_contact_static(tr, point, comm_range, horizon=60.0, dt=0.5, lead=0.0):
     """
     已追蹤車輛對「靜止點」(RSU)的預測連線壽命(秒)：前推車輛 CTRV，
     回傳與 point 距離首次超過 comm_range 的時刻。給 V2I(rsu/cloud)
     的移動性預判用——讓 kalman 層對 V2V 與 V2I 一視同仁。
+    lead：量測時效，先 dead-reckon 前推到現在(同 predict_contact)。
     """
-    a = list(tr.x)
+    a = _lead_state(tr, lead, dt)
     decay = 0.5 ** (dt / OMEGA_HALF_LIFE_S)
     if math.dist(a[:2], point) > comm_range:
         return 0.0

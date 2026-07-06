@@ -120,8 +120,12 @@ GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick �
    ```
    驗收：kalman 的 link_break 介於 linear 與 route 之間、v2i 救回率高、
    rsu_handover 在長路上出現、MAPPO 能耗/成本顯著低於 Greedy。
-3. **論文補強**（檢查員清單殘項）：IPPO vs MAPPO 消融、多 seed(≥3)統計、
-   DT 量測延遲 τ 掃描(數位孿生賣點)、敏感度掃描(sweep_params)。
+3. **論文補強(工具已備，SUMO 上正式跑)**：
+   - IPPO 消融：`train_mappo.py --ippo` 或 `run_seeds.py --ippo`
+   - 多 seed 統計：`run_seeds.py --sumo --seeds 3`
+   - DT 同步延遲掃描：`run_dt_delay.py --sumo --plot`
+     (mock 已證：τ=8s 時 kalman(dead-reckoning 補償) 比 linear 成功率+4pp、誤殺-58%)
+   - 敏感度掃描：sweep_params.py
 4. （可選）RSU 無線電資源競爭(可重用 link 佇列機制)、任務拆分。
 
 ---

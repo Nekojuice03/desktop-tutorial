@@ -58,9 +58,17 @@ class Critic(nn.Module):
 class MAPPO:
     def __init__(self, obs_dim, state_dim, n_actions,
                  lr=3e-4, gamma=0.95, lam=0.95, clip=0.2,
-                 epochs=6, ent_coef=0.02, vf_coef=0.5, device=DEVICE):
+                 epochs=6, ent_coef=0.02, vf_coef=0.5, device=DEVICE,
+                 central_critic=True):
+        """
+        central_critic：CTDE 消融開關。
+          True  = MAPPO：critic 吃「全域狀態」(各RSU佇列/回程/車數/強車數)。
+          False = IPPO ：critic 只吃各 agent 的「局部觀測」——沒有任何全域資訊。
+        兩者 actor 完全相同 → 效能差距即為「中央 critic(全域信用分配)」的價值。
+        """
+        self.central = central_critic
         self.actor = Actor(obs_dim, n_actions).to(device)
-        self.critic = Critic(state_dim).to(device)
+        self.critic = Critic(state_dim if central_critic else obs_dim).to(device)
         self.opt = torch.optim.Adam(
             list(self.actor.parameters()) + list(self.critic.parameters()), lr=lr)
         self.gamma, self.lam, self.clip = gamma, lam, clip
@@ -99,6 +107,16 @@ class MAPPO:
         s = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         return float(self.critic(s).item())
 
+    @torch.no_grad()
+    def value_from(self, obs_batch, state):
+        """bootstrap 價值：MAPPO 用全域狀態；IPPO 用該 tick 各 agent 局部觀測的平均。"""
+        if self.central:
+            return self.value(state)
+        if obs_batch is None or len(obs_batch) == 0:
+            return 0.0
+        o = torch.as_tensor(obs_batch, dtype=torch.float32, device=self.device)
+        return float(self.critic(o).mean().item())
+
     # ---------- PPO 更新 ----------
     def update(self, ticks, last_value=0.0):
         """
@@ -114,10 +132,18 @@ class MAPPO:
         rewards = np.array([t["reward"] for t in ticks], dtype=np.float32)
         dones = np.array([1.0 if t["done"] else 0.0 for t in ticks], dtype=np.float32)
 
-        # critic 對各 tick 全域狀態的價值(算 GAE 用，不需梯度)
+        # critic 對各 tick 的價值(算 GAE 用，不需梯度)：
+        #   MAPPO=全域狀態；IPPO=該 tick 各 agent 局部觀測 V 的平均(無全域資訊)
+        states_t = torch.as_tensor(states_np, dtype=torch.float32, device=self.device)
         with torch.no_grad():
-            states_t = torch.as_tensor(states_np, dtype=torch.float32, device=self.device)
-            values_np = self.critic(states_t).cpu().numpy()
+            if self.central:
+                values_np = self.critic(states_t).cpu().numpy()
+            else:
+                values_np = np.array([
+                    float(self.critic(torch.as_tensor(
+                        t["obs"], dtype=torch.float32, device=self.device)).mean())
+                    if len(t["obs"]) else 0.0
+                    for t in ticks], dtype=np.float32)
         values = np.append(values_np, np.float32(last_value))
 
         # GAE：在 tick 序列上算 advantage 與 return
@@ -131,8 +157,8 @@ class MAPPO:
         ret = adv + values[:T]
         adv = (adv - adv.mean()) / (adv.std() + 1e-8)   # 標準化，訓練更穩
 
-        # 攤平所有 agent 樣本；同 tick 的 agent 共享該 tick 的 advantage
-        obs_all, act_all, logp_all, adv_all = [], [], [], []
+        # 攤平所有 agent 樣本；同 tick 的 agent 共享該 tick 的 advantage/return
+        obs_all, act_all, logp_all, adv_all, ret_all = [], [], [], [], []
         for t, tk in enumerate(ticks):
             k = len(tk["actions"])
             if k == 0:
@@ -141,12 +167,15 @@ class MAPPO:
             act_all.append(tk["actions"])
             logp_all.append(tk["logprobs"])
             adv_all.append(np.full(k, adv[t], dtype=np.float32))
+            ret_all.append(np.full(k, ret[t], dtype=np.float32))
 
         obs_t = torch.as_tensor(np.concatenate(obs_all), dtype=torch.float32, device=self.device)
         act_t = torch.as_tensor(np.concatenate(act_all), dtype=torch.long, device=self.device)
         oldlogp_t = torch.as_tensor(np.concatenate(logp_all), dtype=torch.float32, device=self.device)
         adv_t = torch.as_tensor(np.concatenate(adv_all), dtype=torch.float32, device=self.device)
         ret_t = torch.as_tensor(ret, dtype=torch.float32, device=self.device)
+        ret_agent_t = torch.as_tensor(np.concatenate(ret_all), dtype=torch.float32,
+                                      device=self.device)
 
         last = {}
         for _ in range(self.epochs):
@@ -160,8 +189,13 @@ class MAPPO:
             actor_loss = -torch.min(s1, s2).mean()
 
             # critic：對團隊 return 做回歸
-            v = self.critic(states_t)
-            critic_loss = ((v - ret_t) ** 2).mean()
+            #   MAPPO：V(全域狀態)；IPPO：V(局部觀測)——同 tick 的 agent 共用該 tick 的 return
+            if self.central:
+                v = self.critic(states_t)
+                critic_loss = ((v - ret_t) ** 2).mean()
+            else:
+                v = self.critic(obs_t)
+                critic_loss = ((v - ret_agent_t) ** 2).mean()
 
             loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * entropy
             self.opt.zero_grad()

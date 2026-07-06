@@ -24,3 +24,6 @@ cal_*_output.xml
 rsu_layout.png
 vd_debug.add.xml
 real_traffic_hep.rou.xml
+seeds_results.json
+dt_delay_results.json
+mappo_train_log_ippo.csv
