@@ -27,3 +27,5 @@ real_traffic_hep.rou.xml
 seeds_results.json
 dt_delay_results.json
 mappo_train_log_ippo.csv
+dt_visualization.gif
+dt_snapshot.png
