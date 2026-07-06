@@ -78,15 +78,23 @@ GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick �
 
 ---
 
-## 4. 進度（commit 歷史）
+## 4. 進度（依階段；完整 commit 見 git log）
 
-| Commit | 內容 |
-|---|---|
-| `e48759d` | (前 session) 修能耗模型、資源分配偏差、訓練曲線 |
-| `272ce82` | 完整專案落地 repo 根目錄 |
-| `29f917e` | 通訊升級為 C-V2X/3GPP 鏈路預算，三層獨立協議 |
-| `ea3e4e5` | 避免過度用雲：①有限回程頻寬壅塞 ②雲端 pay-per-use 成本 |
-| `79e5587` | 審查修正：移動性失敗判定、回程可觀測、指派跳能耗、κf² 強車能耗、CPU_NORM、Random 種子 |
+| 階段 | 內容 | 關鍵 commit |
+|---|---|---|
+| 落地 | 完整專案進 repo 根目錄 | `272ce82` |
+| 通訊升級 | C-V2X/3GPP 鏈路預算、三層獨立協議、存取延遲 | `29f917e` |
+| 抑制上雲 | 有限回程壅塞 + pay-per-use 成本 | `ea3e4e5` |
+| 審查修正 | link_break、回程可觀測、指派跳能耗、κf²、CPU_NORM | `79e5587` |
+| 分析工具 | oracle 決策分析 + 交叉點/Pareto 圖 | `e9f8d48` `9274f92` |
+| 多指標訓練 | vision-only 成功率、成本欄、LR 衰減、成本對照圖 | `35faf07` |
+| **移動性閉環** | 事件驅動結算 + route 預判 + V2I 遷移恢復 + 離場處理(優雅退場/consumer_left) | `43c67d1` `d20b31c` |
+| **卡曼預判** | EKF-CTRV(僅 BSM 觀測)三級預判階梯 linear/kalman/route | `09c5c72` |
+| 驗證/消融 | verify_invariants 25 項、run_ablation 3×2 | `79e7ac5` `bba119a` |
+| 對稱化 | RSU/雲也事件驅動(換手 rsu_handover)、sweep_params 修復 | `bba119a` |
+| **和平東路場景** | 路網(hepingeast2)、junction RSU 佈點(3路口×2角+路肩=8)、build_net/build_scenario | `61c4d9f` `e217daa` `f1c97a0` |
+| **真實車流管線** | make_real_flow：台北 VD(路段/設備雙模式)→僅小客車 flow、自動對應+校對+去重 | `395a9b9`…`e2a9960` |
+| 文件 | README(架構圖+流程圖)、COMM_MODEL、本檔 | — |
 
 ---
 
@@ -101,15 +109,20 @@ GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick �
 
 ## 6. 下一步（建議順序）
 
-1. **先在現有小路網重訓並驗收**（找問題最快）：
+1. **和平東路真實車流跑通**：`make_real_flow.py --remap` → sumo-gui 校對
+   VD 方向(vd_debug 粉紅點) → 確認和平東路兩向覆蓋(缺向可鏡射假設)。
+2. **正式重訓與評估**（和平東路 + 真實小客車流）：
    ```
-   python train_mappo.py          # mock 快測會學習
-   python train_mappo.py --sumo   # 真實 SUMO
+   python verify_invariants.py            # 25 項全 PASS
+   python train_mappo.py --sumo
    python compare_and_plot.py --sumo
+   python run_ablation.py --sumo --plot   # 3 預判 × 2 恢復消融
    ```
-   驗收：RSU 能耗 < Cloud、雲端佔比下降、出現少量 `link_break`、有 `avg_cost` 欄位。
-2. **換複雜路網**（大安格網 / 公館）+ 換網管線（見下節）。
-3. （可選）RSU 無線電競爭、成本對照圖、多 seed 訓練取 mean±std。
+   驗收：kalman 的 link_break 介於 linear 與 route 之間、v2i 救回率高、
+   rsu_handover 在長路上出現、MAPPO 能耗/成本顯著低於 Greedy。
+3. **論文補強**（檢查員清單殘項）：IPPO vs MAPPO 消融、多 seed(≥3)統計、
+   DT 量測延遲 τ 掃描(數位孿生賣點)、敏感度掃描(sweep_params)。
+4. （可選）RSU 無線電資源競爭(可重用 link 佇列機制)、任務拆分。
 
 ---
 
@@ -123,12 +136,14 @@ GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick �
 | `osm.sumocfg` | 指向新 net |
 | MAPPO/DQN 模型 | RSU 數變 → 全域狀態維度變 → **重新訓練** |
 
-**取得路網兩條路**：
-- osmWebWizard（目前卡在 Overpass 下載 `Download failed`，疑似 IP 限流/網路阻擋，
-  待換手機熱點或等限流解除再試）
-- 手動：openstreetmap.org Export / bbbike 抓 `.osm` → `netconvert`（不依賴 Overpass，最穩）
+**取得路網(已腳本化，見 README 流程)**：
+Geofabrik `taiwan-latest.osm.pbf` → `osmconvert -b="西,南,東,北"` 裁切 →
+`build_net.bat xxx.osm`(等效 wizard 轉檔，不依賴 Overpass)。
 
-**目前網路範圍**：lon 121.5307–121.5353, lat 25.0402–25.0444（新生南路一段，約 510m²，17 junction）。
+**目前主場景**：`hepingeast2.net.xml`（和平東路二段/復興南路，876×867m，
+45 junction、3 號誌路口）；RSU=3 路口×2 角 + 路肩 2 = 8 個(覆蓋 92%)。
+真實車流：`make_real_flow.py`(路段模式：TotalVol × 全市小客車比例 ≈0.75)。
+舊場景(新生南路)檔案保留於 repo 供回溯。
 
 ---
 
