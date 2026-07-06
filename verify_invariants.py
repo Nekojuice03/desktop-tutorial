@@ -117,7 +117,41 @@ kinds = {k: sum(1 for x in tasks if x.kind == k) for k in ("sensor", "nav", "vis
 check("類型權重：sensor 最多", kinds["sensor"] > kinds["nav"] and
       kinds["sensor"] > kinds["vision"], str(kinds))
 
-print("\n=== [6] 環境層(帳務與觀測) ===")
+print("\n=== [6] 卡曼預判器(EKF-CTRV，僅 BSM 觀測量) ===")
+import math as _m
+from kalman_tracker import EKFCTRV, predict_contact, _ctrv_step
+tr = EKFCTRV()
+for k in range(10):
+    tr.step(10.0 * k, 0.0, 10.0, 0.0, 1.0)
+px, py = tr.forward_position(5.0)
+check("直行車 5s 位置預測誤差 < 5m", _m.dist((px, py), (140, 0)) < 5,
+      f"({px:.1f},{py:.1f}) vs (140,0)")
+om_true, v, th = 0.2, 10.0, 0.0
+x = y = 0.0
+tr2 = EKFCTRV()
+for k in range(15):
+    tr2.step(x, y, v, th, 1.0)
+    x, y, v, th, _ = _ctrv_step(x, y, v, th, om_true, 1.0)
+check("轉彎率 ω 估計收斂(|ω̂-0.2|<0.05)", abs(tr2.omega - om_true) < 0.05,
+      f"ω̂={tr2.omega:.3f}")
+
+
+def _feed_pair(turn_last_k):
+    trA, trB = EKFCTRV(), EKFCTRV()
+    xB, yB, thB = 0.0, 30.0, 0.0
+    for k in range(12):
+        trA.step(10.0 * k, 0.0, 10.0, 0.0, 1.0)
+        trB.step(xB, yB, 10.0, thB, 1.0)
+        om = 0.25 if k >= 12 - turn_last_k else 0.0
+        xB, yB, _, thB, _ = _ctrv_step(xB, yB, 10.0, thB, om, 1.0)
+    return predict_contact(trA, trB, 150.0)
+
+
+c_str, c_turn = _feed_pair(0), _feed_pair(4)
+check("轉彎預判：對方開始轉彎 → 預測 contact 明顯縮短",
+      c_turn < c_str * 0.7, f"直行 {c_str:.0f}s vs 轉彎 {c_turn:.0f}s")
+
+print("\n=== [7] 環境層(帳務與觀測) ===")
 from vec_env_ma import VECMultiEnv
 env = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                   episode_ticks=200, task_cpu_scale=1.0)
@@ -139,6 +173,8 @@ check("帳務：fail = miss + infeasible + pred_reject + break_failed",
       + st["pred_reject"] + st["break_failed"])
 check("帳務：link_break = recovered + failed",
       s["link_break"] == s["break_recovered"] + s["break_failed"])
+check("帳務：consumer_left ⊆ break_failed",
+      s["consumer_left"] <= s["break_failed"])
 check("回合有實際處理任務(>200)", st["latency_n"] > 200, f"{st['latency_n']} 筆")
 env.close()
 

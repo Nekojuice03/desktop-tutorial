@@ -76,23 +76,44 @@ delay = data_bits / rate(d)             ；d > 覆蓋半徑 → ∞(卸載失敗
 **移動性:兩層機制(預判 proactive + 恢復 reactive)** —— V2V 中途斷線的完整處理:
 
 *預判層(admission control)*:決策當下以預測的連線壽命 `contact_s` 檢查
-`總延遲 ≤ contact_s`,不足即拒絕(`pred_reject`)。預測器兩級(消融用,
-`VECMultiEnv(predictor=...)`):
+`總延遲 ≤ contact_s`,不足即拒絕(`pred_reject`)。預測器**三級階梯**
+(naive → 可部署 → oracle;消融用,`VECMultiEnv(predictor=...)`):
 - `"linear"`:等速直線外推(`comm_model.contact_time` 解析解)——路口轉彎會**高估**。
-- `"route"`(預設):再取 `min(直線外推, 路線分歧時間)`。路線分歧時間由
-  `TraciWorld.route_divergence_time()` 用兩車剩餘 route 的共同前綴長度/較快車速估計
-  ——物理上對應 **V2X 意圖分享**(SAE J2735 BSM Path Prediction、ETSI CAM path
-  history:車輛本就廣播預測路徑,數位孿生為其匯集點),非作弊。
+- `"kalman"`(**預設,現實可部署**):EKF-CTRV 卡曼濾波(`kalman_tracker.py`)。
+  **只用車輛本就廣播的 BSM/CAM 可觀測量**(位置/速度/航向,無需路線),
+  狀態 [x,y,v,θ,ω] 中的轉彎率 ω 由航向歷史濾波估出 → 前推兩車軌跡求
+  「距離首超通訊半徑」時刻 = 預測連線壽命(PLL)。**能預判對方正在轉彎或
+  維持同向**;ω 以半衰期 10s 衰減(轉彎為暫態)。回應「模擬知道路線、
+  現實怎麼辦」:數位孿生本就持續收 BSM/CAM,以 KF 追蹤是標準做法。
+  文獻:Kalman 預測 link residual lifetime(IEEE VTC 2016)、
+  VANET 位置預測(WPC 2014)、EKF 之 PLL 指標。
+- `"route"`(oracle 上界):再取 `min(直線外推, 離場時間, 路線分歧時間)`。由
+  `TraciWorld.route_divergence_time()` 估計:
+  (i) **離場時間**——任一車走完剩餘路線抵達終點就會離開模擬(SUMO 消融實測的
+  斷線**主因**,而非開出範圍);紅燈停等以車道限速三成為速度下限。
+  (ii) **分歧時間**——同路兩車的共同前綴長度/較快車速(不同路無法對齊時仍保留離場上限)。
+  物理上對應 **V2X 意圖分享**(SAE J2735 BSM Path Prediction、ETSI CAM path
+  history:車輛本就廣播預測路徑與目的地,數位孿生為其匯集點),非作弊。
   文獻:link lifetime prediction 可將任務丟失/重做率降 70–80%(Sensors 2022)。
 
-*事件驅動結算*:V2V 任務不在決策當下拍板,而是掛到「預計完成時刻」,屆時用
-SUMO **真實位置**驗證兩車是否仍在範圍內 —— 預判失準(轉彎)就產生真實斷線
-(`link_break`)。RL 先收預測獎勵,結算差額補進後續 tick 的團隊獎勵(GAE 回傳信用)。
+*事件驅動結算(V2V 與 RSU/雲對稱)*:所有卸載任務(本地除外)不在決策當下拍板,
+而是掛到「預計完成時刻」,屆時用 SUMO **真實位置**驗證「結果送得回持有車嗎」:
+- V2V:兩車仍在範圍 → 照預測;否則真實斷線(`link_break`) → 進恢復層。
+- RSU/雲:持有車仍在**原服務基站**覆蓋 → 照預測;駛入**另一 RSU** 覆蓋 →
+  基礎設施**換手**(`rsu_handover`,蜂巢常態,付換手存取+重送下行代價);
+  完全無覆蓋 → 失敗。對稱設計避免「只有 V2V 承受執行期風險」的偏袒。
+RL 先收預測獎勵,結算差額補進後續 tick 的團隊獎勵(GAE 回傳信用)。
+kalman 預判層同樣對稱:V2V 用兩車 CTRV 前推、V2I 用單車對靜止 RSU 前推
+(`predict_contact_static`)。
 
 *恢復層(service migration)*:真實斷線時(`VECMultiEnv(recovery=...)`):
 - `"v2i"`(預設):結果經基礎設施遷移 執行車→RSU→(有線)→RSU→持有車,
   遷移延遲 = V2I 存取 + 兩段 V2I 傳輸,可能因此超時;救回計 `break_recovered`。
+  **執行車已抵達離場**時用其離場前最後位置做「優雅退場交接」(車輛抵達不是
+  瞬間蒸發,離場前可把結果交給路側)——修正先前對象離場即無法恢復的問題。
 - `"fail"`:直接失敗(`break_failed`);兩端任一側無 RSU 覆蓋時亦同。
+- **持有車離場**(結果無人接收)為任務作廢,獨立計 `consumer_left`
+  (break_failed 子類),論文可分開報告。
 文獻:migration-enabled task offloading / service continuity(CCF TPCI 2024 等)。
 
 rsu/cloud 目標為靜止基站,仍用等速外推的 sojourn 檢查;本地不檢查。
@@ -136,6 +157,8 @@ cost = 運算量(cycles) × 每 cycle 單價     (cloud 2e-10 > rsu 5e-11 > loca
 ## 參考文獻
 - 3GPP TR 37.885, *Study on evaluation methodology of new V2X use cases for LTE and NR*（V2X 通道/路徑損耗模型）。
 - "Evaluating Link Lifetime Prediction to Support Computational Offloading Decision in VANETs," *Sensors* 22(16), 2022（連線壽命預測支援卸載決策；ML 預測降任務丟失 70–80%）。
+- "Prediction of link residual lifetime using Kalman filter in vehicular ad hoc networks," *IEEE VTC*, 2016（卡曼濾波預測連線殘餘壽命——kalman 預判器的直接依據）。
+- "Location Prediction of Vehicles in VANETs Using A Kalman Filter," *Wireless Personal Communications*, 2014（KF 車輛位置預測）。
 - "A bandwidth-fair migration-enabled task offloading for vehicular edge computing," *CCF TPCI*, 2024（斷線後任務遷移/服務連續性）。
 - "Vehicle Motion Prediction at Intersections Based on the Turning Intention and Prior Trajectories Model," *IEEE/CAA JAS*, 2021（路口轉向意圖辨識）。
 - SAE J2735（BSM Path Prediction）、ETSI EN 302 637-2（CAM path history）——V2X 意圖分享標準，route-aware 預判器的物理依據。

@@ -15,7 +15,10 @@ V2V 動作拆兩種，讓 agent 自己學「強但遠」vs「近但弱」的取�
 直接執行 `python vec_env_ma.py` 跑 mock 自我測試。
 """
 import os
+import math
 import numpy as np
+
+from kalman_tracker import EKFCTRV, predict_contact, predict_contact_static
 
 from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
                         neighbors_in_range, rsus_in_range, contact_time)
@@ -44,12 +47,16 @@ class VECMultiEnv:
                  arrival_rate=0.3, server_ratio=0.4, seed=0,
                  episode_ticks=200, rsus=None, mock_vehicles=24,
                  task_cpu_scale=1.0, task_deadline_scale=1.0,
-                 predictor="route", recovery="v2i"):
+                 predictor="kalman", recovery="v2i"):
         """
-        predictor：V2V 連線壽命預判器(消融用)
+        predictor：V2V 連線壽命預判器(消融階梯：naive → 可部署 → oracle)
           "linear" = 等速直線外推(baseline，路口轉彎會高估)
-          "route"  = 再疊加「路線分歧時間」(數位孿生已知路線 = V2X 意圖分享；
-                     SUMO 模式才有 route，mock 自動退回 linear)
+          "kalman" = 預設。EKF-CTRV 卡曼濾波：只用車輛本就廣播的 BSM/CAM
+                     可觀測量(位置/速度/航向)估計「轉彎率 ω」→ 預判對方
+                     會轉彎或維持同向(現實可部署；文獻: Kalman link
+                     residual lifetime, IEEE VTC 2016)
+          "route"  = 疊加「路線分歧+離場時間」(需 V2X 意圖分享=已知路線，
+                     oracle 上界；SUMO 模式才有 route，mock 退回 linear)
         recovery：V2V 任務在完成時刻「實際已斷線」時的恢復策略(消融用)
           "fail" = 直接失敗(最保守)
           "v2i"  = 結果經 V2I 遷移接續(執行車→RSU→持有車)，付遷移延遲/能耗
@@ -102,6 +109,12 @@ class VECMultiEnv:
         否則退回等速外推(linear baseline / mock)。觀測、決策、greedy 都走這裡，
         所以升級預判器時 agent 的 contact 特徵會同步變準。
         """
+        if self.predictor == "kalman":
+            # 可部署層：EKF-CTRV 前推(含轉彎率) → 預測連線壽命。
+            # 追蹤器未熱身(<3 筆量測)時退回等速外推。
+            ta, tb = self._trackers.get(a_id), self._trackers.get(b_id)
+            if ta is not None and tb is not None and ta.ready and tb.ready:
+                return predict_contact(ta, tb, V2V_RANGE_M)
         c = self._contact(a_id, a_pos, b_id, b_pos)
         if self.predictor == "route":
             t_div = self.world.route_divergence_time(a_id, b_id)
@@ -118,11 +131,21 @@ class VECMultiEnv:
         if kind in ("v2v_strong", "v2v_near"):
             return self._pair_contact(ctx["holder_id"], ctx["holder_pos"], tid, tpos)
         if kind in ("rsu", "cloud"):
+            # V2I 與 V2V 同一套預判階梯(對稱，避免偏袒基礎設施)：
+            if self.predictor == "kalman":
+                tr = self._trackers.get(ctx["holder_id"])
+                if tr is not None and tr.ready:
+                    return predict_contact_static(tr, tpos, RSU_RANGE_M)
             hv = velocity_from_speed_angle(
                 self.veh_states[ctx["holder_id"]]["speed"],
                 self.veh_states[ctx["holder_id"]]["angle"]) \
                 if ctx["holder_id"] in self.veh_states else (0.0, 0.0)
-            return contact_time(ctx["holder_pos"], hv, tpos, (0.0, 0.0), RSU_RANGE_M)
+            c = contact_time(ctx["holder_pos"], hv, tpos, (0.0, 0.0), RSU_RANGE_M)
+            if self.predictor == "route":
+                t_exit = self.world.route_exit_time(ctx["holder_id"])
+                if t_exit is not None:
+                    c = min(c, t_exit)   # 持有車離場前必須收到結果
+            return c
         return None  # local
 
     # ---------- 單一任務情境 ----------
@@ -215,6 +238,22 @@ class VECMultiEnv:
         now, veh_states = self.world.step()
         self.now = now
         self.veh_states = veh_states
+        # 記住每台車最後出現的位置：車輛抵達終點會從模擬消失(despawn)，
+        # 結算時若執行車已離場，用它離場前的位置做「優雅退場交接」(見 _settle_one)
+        for vid, s in veh_states.items():
+            self._last_seen[vid] = s["pos"]
+        # 卡曼追蹤：把每 tick 的 BSM 量測(位置/速度/航向)餵進各車的 EKF-CTRV
+        if self.predictor == "kalman":
+            dt = getattr(self.world, "dt", 1.0)
+            for vid, s in veh_states.items():
+                vx, vy = velocity_from_speed_angle(s["speed"], s["angle"])
+                theta = math.atan2(vy, vx)
+                tr = self._trackers.get(vid)
+                if tr is None:
+                    tr = self._trackers[vid] = EKFCTRV()
+                tr.step(s["pos"][0], s["pos"][1], s["speed"], theta, dt)
+            for vid in [v for v in self._trackers if v not in veh_states]:
+                del self._trackers[vid]   # 離場車清掉
         for vid in veh_states:
             if vid not in self.roles:
                 if is_server(vid, self.server_ratio):
@@ -343,20 +382,22 @@ class VECMultiEnv:
         if total > task.deadline_s:
             reward -= PENALTY_MISS
 
-        if est_kind == "v2v":
-            # ★事件驅動結算：V2V 的成敗不在決策當下拍板，而是掛到「預計完成時刻」，
-            #   屆時用 SUMO/世界的真實位置驗證兩車是否仍在範圍內(預判可能出錯，
-            #   如轉彎)。此刻先回「預測獎勵」給 RL；結算若與預測不符，差額(delta)
-            #   會補進之後 tick 的團隊獎勵(GAE 會把延後的信用往回傳)。
+        if est_kind != "local":
+            # ★事件驅動結算(V2V 與 RSU/雲一視同仁，避免只有 V2V 承受執行期風險)：
+            #   成敗不在決策當下拍板，而是掛到「預計完成時刻」，屆時用世界的
+            #   真實位置驗證「結果送得回持有車嗎」。此刻先回「預測獎勵」給 RL；
+            #   結算與預測不符的差額(delta)補進之後 tick 的團隊獎勵(GAE 回傳信用)。
             self._inflight.append({
+                "mode": "v2v" if est_kind == "v2v" else "infra",
                 "task": task, "helper": tid, "holder": ctx["holder_id"],
+                "serving_rsu": ctx["rsu_id"],   # infra：執行/轉送用的服務基站
                 "t_done": now + r["latency"],   # now 已含指派跳時刻
                 "total": total, "energy": energy, "cost": r["cost"],
                 "pred_reward": reward,
             })
             return reward
 
-        # 非 V2V(本地/RSU/雲)：目標不會移動或不受 V2V 斷線影響 → 決策當下即結算
+        # 本地：不經無線傳輸 → 決策當下即結算
         self._finalize(total, energy, r["cost"], task, ok=(total <= task.deadline_s))
         return reward
 
@@ -394,9 +435,54 @@ class VECMultiEnv:
             self._settle_one(f)
         self._inflight = remain
 
+    def _fail_settle(self, f, consumer_gone=False):
+        """結算為不可恢復失敗：計數 + 統計 + 獎勵差額。"""
+        task = f["task"]
+        self.stats["link_break"] += 1
+        if consumer_gone:
+            self.stats["consumer_left"] += 1
+        self.stats["break_failed"] += 1
+        self.stats["fail"] += 1
+        self._record_kind(task.kind, False)
+        self._settle_delta += (-PENALTY_FAIL) - f["pred_reward"]
+
     def _settle_one(self, f):
         task = f["task"]
         hp = self.veh_states.get(f["holder"])
+
+        if f["mode"] == "infra":
+            # ---- RSU/雲：結果由基礎設施下行送回持有車 ----
+            if hp is None:
+                self._fail_settle(f, consumer_gone=True)   # 持有車離場，結果無人接收
+                return
+            srv = f["serving_rsu"]
+            srv_pos = (self.rsus[srv]["x"], self.rsus[srv]["y"])
+            if distance(hp["pos"], srv_pos) <= RSU_RANGE_M:
+                self._finalize(f["total"], f["energy"], f["cost"], task,
+                               ok=(f["total"] <= task.deadline_s))
+                return
+            # 駛出原服務基站覆蓋 → 基礎設施互聯，換手到目前最近的 RSU 重送結果
+            # (蜂巢式常態操作，不算斷線；但要付換手存取 + 重送下行的代價)
+            near = rsus_in_range(hp["pos"], self.rsus, RSU_RANGE_M)
+            if near:
+                p2 = (self.rsus[near[0]]["x"], self.rsus[near[0]]["y"])
+                t_dn = transmission_delay(task.result_bits,
+                                          distance(hp["pos"], p2), V2I_LINK)
+                if t_dn != INF:
+                    extra = RSU_EXTRA_LATENCY + t_dn
+                    new_total = f["total"] + extra
+                    new_energy = f["energy"] + TX_POWER_W * t_dn
+                    ok = new_total <= task.deadline_s
+                    self.stats["rsu_handover"] += 1
+                    self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
+                    new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
+                                   + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
+                    self._settle_delta += new_reward - f["pred_reward"]
+                    return
+            self._fail_settle(f)   # 覆蓋空洞：無任何 RSU 可送達
+            return
+
+        # ---- V2V：驗證持有車與執行車是否仍在範圍 ----
         ep = self.veh_states.get(f["helper"])
         in_range = (hp is not None and ep is not None and
                     distance(hp["pos"], ep["pos"]) <= V2V_RANGE_M)
@@ -407,27 +493,37 @@ class VECMultiEnv:
             return
 
         # ---- 真實斷線(runtime link break) ----
+        # SUMO 實測主因不是「開出範圍」而是「車輛抵達終點離開模擬(despawn)」：
+        #   持有車離場 → 結果無人接收，性質上是任務作廢(consumer_left)，不可恢復。
+        #   執行車離場 → 「優雅退場交接」：車輛抵達不是瞬間蒸發，離場前可把結果
+        #     交給其最後位置附近的 RSU(用 _last_seen 快取) → 仍可走 V2I 遷移。
         self.stats["link_break"] += 1
-        if self.recovery == "v2i" and hp is not None and ep is not None:
-            r1 = rsus_in_range(ep["pos"], self.rsus, RSU_RANGE_M)   # 執行車側 RSU
-            r2 = rsus_in_range(hp["pos"], self.rsus, RSU_RANGE_M)   # 持有車側 RSU
-            if r1 and r2:
-                p1 = (self.rsus[r1[0]]["x"], self.rsus[r1[0]]["y"])
-                p2 = (self.rsus[r2[0]]["x"], self.rsus[r2[0]]["y"])
-                t_up = transmission_delay(task.result_bits, distance(ep["pos"], p1), V2I_LINK)
-                t_dn = transmission_delay(task.result_bits, distance(hp["pos"], p2), V2I_LINK)
-                if t_up != INF and t_dn != INF:
-                    extra = RSU_EXTRA_LATENCY + t_up + t_dn   # 遷移延遲(RSU間走有線骨幹，忽略)
-                    new_total = f["total"] + extra
-                    new_energy = f["energy"] + TX_POWER_W * (t_up + t_dn)
-                    ok = new_total <= task.deadline_s
-                    self.stats["break_recovered"] += 1
-                    self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
-                    new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
-                                   + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
-                    self._settle_delta += new_reward - f["pred_reward"]
-                    return
-        # 無法恢復(策略=fail、車已離場、或任一側無 RSU 覆蓋)
+        if hp is None:
+            self.stats["consumer_left"] += 1   # break_failed 的子類(帳務仍計 break_failed)
+        elif self.recovery == "v2i":
+            helper_pos = ep["pos"] if ep is not None else self._last_seen.get(f["helper"])
+            if helper_pos is not None:
+                r1 = rsus_in_range(helper_pos, self.rsus, RSU_RANGE_M)  # 執行車側 RSU
+                r2 = rsus_in_range(hp["pos"], self.rsus, RSU_RANGE_M)   # 持有車側 RSU
+                if r1 and r2:
+                    p1 = (self.rsus[r1[0]]["x"], self.rsus[r1[0]]["y"])
+                    p2 = (self.rsus[r2[0]]["x"], self.rsus[r2[0]]["y"])
+                    t_up = transmission_delay(task.result_bits,
+                                              distance(helper_pos, p1), V2I_LINK)
+                    t_dn = transmission_delay(task.result_bits,
+                                              distance(hp["pos"], p2), V2I_LINK)
+                    if t_up != INF and t_dn != INF:
+                        extra = RSU_EXTRA_LATENCY + t_up + t_dn  # RSU 間走有線骨幹，忽略
+                        new_total = f["total"] + extra
+                        new_energy = f["energy"] + TX_POWER_W * (t_up + t_dn)
+                        ok = new_total <= task.deadline_s
+                        self.stats["break_recovered"] += 1
+                        self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
+                        new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
+                                       + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
+                        self._settle_delta += new_reward - f["pred_reward"]
+                        return
+        # 無法恢復(持有車離場、策略=fail、或任一側無 RSU 覆蓋)
         self.stats["break_failed"] += 1
         self.stats["fail"] += 1
         self._record_kind(task.kind, False)
@@ -474,6 +570,8 @@ class VECMultiEnv:
                       "link_break": 0,       # 執行期真實斷線事件(= recovered+failed)
                       "break_recovered": 0,  # 斷線但經 V2I 遷移救回(可能仍超時)
                       "break_failed": 0,     # 斷線且無法恢復 → 任務失敗
+                      "consumer_left": 0,    # 其中：持有車已離場(結果無人接收，break_failed 子類)
+                      "rsu_handover": 0,     # RSU/雲結果經「換手」由新服務基站送達(非斷線)
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
                       "cost_sum": 0.0, "by_target": {},
@@ -504,6 +602,8 @@ class VECMultiEnv:
         self._active = []
         self._inflight = []       # 在途 V2V 任務(等完成時刻結算)
         self._settle_delta = 0.0  # 結算 vs 預測獎勵的差額(補進下一步團隊獎勵)
+        self._last_seen = {}      # vid -> 最後出現位置(離場車的優雅退場交接用)
+        self._trackers = {}       # vid -> EKF-CTRV 追蹤器(predictor="kalman")
         self._ep += 1
         self._reset_stats()
 
@@ -561,6 +661,8 @@ class VECMultiEnv:
                 "pred_reject": s["pred_reject"], "link_break": s["link_break"],
                 "break_recovered": s["break_recovered"],
                 "break_failed": s["break_failed"],
+                "consumer_left": s["consumer_left"],
+                "rsu_handover": s["rsu_handover"],
                 "fallback": s["fallback"],
                 "by_target": dict(s["by_target"])}
 

@@ -91,44 +91,73 @@ class TraciWorld:
         self.done = t.simulation.getMinExpectedNumber() <= 0
         return now, states
 
+    def _route_exit_time(self, vid):
+        """
+        車輛把「剩餘路線」走完、抵達終點駛離模擬還需幾秒。
+        ★SUMO 消融實測的斷線主因：對象車抵達終點 despawn，而非開出通訊範圍——
+          所以預判必須含「離場時間」。紅燈停等會讓當前速度≈0 → 以車道限速三成
+          為速度下限(等紅燈的車終究會走)，避免除以近零而永不預警。
+        """
+        t = self._t
+        route = t.vehicle.getRoute(vid)
+        idx = max(t.vehicle.getRouteIndex(vid), 0)
+        remain = 0.0
+        for e in route[idx:]:
+            remain += t.lane.getLength(e + "_0")
+        if t.vehicle.getRoadID(vid) == route[idx]:
+            remain -= t.vehicle.getLanePosition(vid)
+        v_floor = 0.3 * t.lane.getMaxSpeed(route[idx] + "_0")
+        v = max(t.vehicle.getSpeed(vid), v_floor, 1.0)
+        return max(remain, 0.0) / v
+
+    def route_exit_time(self, vid):
+        """單車離場時間的公開介面(V2I 移動性上限用)；查詢失敗回 None。"""
+        try:
+            return self._route_exit_time(vid)
+        except Exception:
+            return None
+
     def route_divergence_time(self, a, b):
         """
-        兩車依「已知路線」還會同路多久(秒)；資訊不足回 None(呼叫端退回等速外推)。
-        物理意涵：模擬 V2X 意圖分享(SAE J2735 BSM Path Prediction / ETSI CAM path
-        history)——車輛廣播自己的預測路徑，數位孿生匯集後即可預判兩車何時分道
-        (轉彎/岔路)，比等速直線外推準確(直線外推在路口會系統性高估 contact)。
-        做法：取兩車剩餘 route 的共同前綴長度(公尺)，除以較快者速度(保守)。
+        兩車依「已知路線」還能保持連線多久(秒)；資訊不足回 None(退回等速外推)。
+        物理意涵：模擬 V2X 意圖分享(SAE J2735 BSM Path Prediction / ETSI CAM)——
+        數位孿生知道各車路線與「終點」，可預判：
+          (1) 離場：任一車走完剩餘路線就會消失 → min(兩車離場時間)   ←斷線主因
+          (2) 分歧：同路兩車在前方岔口分道 → 共同前綴長度 / 較快車速
+        取各項下限。兩車不同路無法對齊時仍回傳離場上限(先前此情況整個放棄)。
         """
         t = self._t
         try:
+            caps = [self._route_exit_time(a), self._route_exit_time(b)]
+
             ra = t.vehicle.getRoute(a); ia = max(t.vehicle.getRouteIndex(a), 0)
             rb = t.vehicle.getRoute(b); ib = max(t.vehicle.getRouteIndex(b), 0)
             fa, fb = list(ra[ia:]), list(rb[ib:])
-            if not fa or not fb:
-                return None
             # 對齊：允許一車稍前(其當前邊出現在另一車最近的未來三條邊)
-            if fa[0] != fb[0]:
+            aligned = bool(fa and fb)
+            if aligned and fa[0] != fb[0]:
                 if fb[0] in fa[:3]:
                     fa = fa[fa.index(fb[0]):]
                 elif fa[0] in fb[:3]:
                     fb = fb[fb.index(fa[0]):]
                 else:
-                    return None    # 不同路且不相接 → 無路線資訊可用
-            # 共同前綴總長，第一條共同邊扣掉已駛過的部分(取兩車較大者，保守)
-            shared = 0.0
-            for i in range(min(len(fa), len(fb))):
-                if fa[i] != fb[i]:
-                    break
-                length = t.lane.getLength(fa[i] + "_0")
-                if i == 0:
-                    pos = 0.0
-                    for vid in (a, b):
-                        if t.vehicle.getRoadID(vid) == fa[0]:
-                            pos = max(pos, t.vehicle.getLanePosition(vid))
-                    length = max(0.0, length - pos)
-                shared += length
-            v = max(t.vehicle.getSpeed(a), t.vehicle.getSpeed(b), 0.1)
-            return shared / v      # 較快者先走完共同路段 → 保守估計
+                    aligned = False   # 不同路：分歧項不可得，僅用離場上限
+            if aligned:
+                shared = 0.0
+                for i in range(min(len(fa), len(fb))):
+                    if fa[i] != fb[i]:
+                        break
+                    length = t.lane.getLength(fa[i] + "_0")
+                    if i == 0:
+                        pos = 0.0
+                        for vid in (a, b):
+                            if t.vehicle.getRoadID(vid) == fa[0]:
+                                pos = max(pos, t.vehicle.getLanePosition(vid))
+                        length = max(0.0, length - pos)
+                    shared += length
+                v = max(t.vehicle.getSpeed(a), t.vehicle.getSpeed(b), 0.1)
+                caps.append(shared / v)   # 較快者先走完共同路段 → 保守
+            return min(caps)
         except Exception:
             return None
 
@@ -180,6 +209,10 @@ class MockWorld:
 
     def route_divergence_time(self, a, b):
         """Mock 車流沒有路線資訊 → None(呼叫端退回等速外推)。"""
+        return None
+
+    def route_exit_time(self, vid):
+        """Mock 車流沒有路線資訊 → None。"""
         return None
 
     def close(self):

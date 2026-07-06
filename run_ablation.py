@@ -25,9 +25,11 @@ import numpy as np
 
 from vec_env_ma import VECMultiEnv, SCRIPT_DIR
 
-COMBOS = [("linear", "fail"), ("linear", "v2i"),
-          ("route", "fail"), ("route", "v2i")]
-EVENT_KEYS = ("pred_reject", "link_break", "break_recovered", "break_failed")
+# 預判器消融階梯：naive(linear) → 可部署(kalman，僅 BSM 觀測) → oracle(route，意圖分享)
+COMBOS = [(p, r) for p in ("linear", "kalman", "route")
+          for r in ("fail", "v2i")]
+EVENT_KEYS = ("pred_reject", "link_break", "break_recovered", "break_failed",
+              "consumer_left", "rsu_handover")
 
 
 def run_episodes(env, mode, algo=None, episodes=6, seed0=2000):
@@ -100,15 +102,15 @@ def main():
     print(f"=== 移動性機制消融（{tag}，每組 {episodes} 回合，"
           f"策略：{policies}）===")
     if not use_sumo:
-        print("（mock 無路線資訊：route 預判退化為 linear，兩者應相同 —— 屬設計驗證；"
-              "預判軸差異需在 SUMO 路口情境）")
+        print("（mock 無路線資訊：route 退化為 linear(設計驗證)；kalman 只用量測、"
+              "mock 也有效。route 軸與離場效應需在 SUMO 路口情境）")
 
     results = {}
     for pol in policies:
         print(f"\n── 策略：{pol} ──")
         print(f"  {'predictor':9}{'recovery':9}{'成功率%':>8}{'vision%':>8}"
               f"{'延遲ms':>8}{'能耗J':>7}{'成本':>7}"
-              f"{'預判拒':>7}{'斷線':>5}{'救回':>5}{'損失':>5}")
+              f"{'預判拒':>7}{'斷線':>5}{'救回':>5}{'損失':>5}{'客離場':>6}{'換手':>5}")
         for pred, rec in COMBOS:
             env = VECMultiEnv(**base_cfg, predictor=pred, recovery=rec)
             r = run_episodes(env, pol, algo=algo, episodes=episodes)
@@ -117,7 +119,8 @@ def main():
             print(f"  {pred:9}{rec:9}{r['success']:8.1f}{r['vision']:8.1f}"
                   f"{r['latency']:8.0f}{r['energy']:7.2f}{r['cost']:7.3f}"
                   f"{r['pred_reject']:7d}{r['link_break']:5d}"
-                  f"{r['break_recovered']:5d}{r['break_failed']:5d}")
+                  f"{r['break_recovered']:5d}{r['break_failed']:5d}"
+                  f"{r['consumer_left']:6d}{r['rsu_handover']:5d}")
 
     out = os.path.join(SCRIPT_DIR, "ablation_results.json")
     with open(out, "w", encoding="utf-8") as f:
@@ -135,7 +138,8 @@ def main():
         sr = [results[k]["success"] for k in keys]
         sd = [results[k]["success_std"] for k in keys]
         axes[0].bar(labels, sr, yerr=sd, capsize=4,
-                    color=["#b0bec5", "#90caf9", "#64b5f6", "#1565c0"],
+                    color=["#cfd8dc", "#90a4ae", "#90caf9", "#42a5f5",
+                           "#1e88e5", "#0d47a1"][:len(keys)],
                     edgecolor="black", linewidth=0.6)
         axes[0].set_ylabel("Task Success Rate (%)")
         axes[0].set_title(f"Ablation: predictor × recovery ({pol}, {tag})")

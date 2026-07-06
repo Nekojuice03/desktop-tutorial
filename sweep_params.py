@@ -20,8 +20,8 @@ import numpy as np
 
 import infra_config
 import nodes
-from vec_env_ma import VECMultiEnv
-from vec_env import ACTIONS
+from vec_env_ma import VECMultiEnv, MA_ACTIONS as ACTIONS   # ★MA 環境是 5 動作，
+# 先前誤用 vec_env 的 4 動作 ACTIONS → "rsu" 索引錯位成 v2v_near，掃描結果失真
 from mappo import MAPPO
 from train_mappo import collect, evaluate
 
@@ -65,9 +65,9 @@ def train_eval(cpu_scale, iters=MAPPO_ITERS):
     for _ in range(iters):
         ticks, carry, lv = collect(env, algo, 512, carry)
         algo.update(ticks, last_value=lv)
-    sr, lat, dist = evaluate(env, algo, episodes=3)
+    m = evaluate(env, algo)   # 新版 evaluate 回傳多指標 dict(固定種子集)
     env.close()
-    return sr, lat, dist
+    return m["sr"], m["lat"], m["dist"]
 
 
 def spread_score(dist):

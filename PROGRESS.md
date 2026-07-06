@@ -43,11 +43,15 @@
 ```
 - **佇列**：車輛/RSU 為 FIFO(busy_until)，雲端無佇列；回程為 100Mbps 共享 FIFO
 - **移動性(兩層)**：
-  - 預判層：`predictor="linear"|"route"`(route=用 SUMO 路線估分歧時間=V2X 意圖分享)，
-    預測斷線 → 拒卸載(`pred_reject`)
+  - 預判層三級階梯：`predictor="linear"|"kalman"|"route"`
+    - linear=等速外推(naive)；**kalman=EKF-CTRV(預設,現實可部署,只用 BSM
+      位置/速度/航向估轉彎率 ω → 預判轉彎,kalman_tracker.py)**；
+      route=路線分歧+離場時間(V2X 意圖分享,oracle 上界)
+    - 預測斷線 → 拒卸載(`pred_reject`)
   - 事件驅動結算：V2V 到「完成時刻」用真實位置驗證 → 預判失準產生真實 `link_break`
-  - 恢復層：`recovery="v2i"|"fail"`(v2i=結果經 RSU 遷移接續,`break_recovered`)
-  - 消融四組合：linear/route × fail/v2i(詳見 COMM_MODEL.md 第四節)
+  - 恢復層：`recovery="v2i"|"fail"`(v2i=結果經 RSU 遷移接續,含離場車的
+    優雅退場交接,`break_recovered`；持有車離場=`consumer_left`)
+  - 消融 3×2=6 組合(run_ablation.py；詳見 COMM_MODEL.md 第四節)
 
 ### 演算法（mappo.py）
 GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick 各 agent 平均。
