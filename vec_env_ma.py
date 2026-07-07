@@ -47,7 +47,8 @@ class VECMultiEnv:
                  arrival_rate=0.3, server_ratio=0.4, seed=0,
                  episode_ticks=200, rsus=None, mock_vehicles=24,
                  task_cpu_scale=1.0, task_deadline_scale=1.0,
-                 predictor="kalman", recovery="v2i", obs_delay=0):
+                 predictor="kalman", recovery="v2i", obs_delay=0,
+                 arrival_delivery=False):
         """
         predictor：V2V 連線壽命預判器(消融階梯：naive → 可部署 → oracle)
           "linear" = 等速直線外推(baseline，路口轉彎會高估)
@@ -64,11 +65,18 @@ class VECMultiEnv:
           速度/航向)比物理世界舊 τ 秒 → 預判器與 contact 觀測特徵都吃舊資料；
           物理結算(真實位置驗證)不受影響。τ=0 為完美同步(預設，行為不變)。
           用途：量化 DT 同步性需求(run_dt_delay.py 掃描)。
+        arrival_delivery：★抵達補送(消融用，預設 False=維持既有語意)。
+          SUMO 實測斷線主因為「車主抵達目的地離開模擬(consumer_left)」——
+          現實中抵達≠蒸發，停妥的車仍可經基礎設施收結果。開啟後：
+          車主離場 → 結果經 執行端→RSU→(有線)→車主停靠處RSU→車主 補送
+          (計 break_recovered+arrival_delivered，可能因補送延遲超時)。
+          假設「結果對已抵達車主仍具價值」(論文聲明)。
         """
         self.mock = mock
         self.predictor = predictor
         self.recovery = recovery
         self.obs_delay = int(obs_delay)
+        self.arrival_delivery = arrival_delivery
         self.gui = gui
         self.cfg = cfg
         self.arrival_rate = arrival_rate
@@ -457,15 +465,68 @@ class VECMultiEnv:
         self._inflight = remain
 
     def _fail_settle(self, f, consumer_gone=False):
-        """結算為不可恢復失敗：計數 + 統計 + 獎勵差額。"""
-        task = f["task"]
+        """斷線結算：車主離場先試「抵達補送」(若啟用)，否則計不可恢復失敗。"""
         self.stats["link_break"] += 1
         if consumer_gone:
             self.stats["consumer_left"] += 1
+            if self.arrival_delivery and self._deliver_to_departed(f):
+                return
+        self._fail_tail(f)
+
+    def _fail_tail(self, f):
+        """不可恢復失敗的共同尾段：計數 + 統計 + 獎勵差額。"""
         self.stats["break_failed"] += 1
         self.stats["fail"] += 1
-        self._record_kind(task.kind, False)
+        self._record_kind(f["task"].kind, False)
         self._settle_delta += (-PENALTY_FAIL) - f["pred_reward"]
+
+    def _deliver_to_departed(self, f):
+        """
+        ★抵達補送(arrival delivery)：車主抵達目的地離開模擬 ≠ 蒸發——
+        停妥的車仍可經基礎設施收結果。補送路徑：
+          執行端(執行車→最近RSU；RSU/雲已在基礎設施內) →(有線骨幹)→
+          車主停靠處最近 RSU → 車主。
+        成功回 True(計 break_recovered+arrival_delivered，補送延遲可能致超時)；
+        任一端無 RSU 覆蓋回 False(交回失敗尾段)。
+        假設：任務結果對已抵達車主仍具價值(論文聲明；導航類可另議)。
+        """
+        task = f["task"]
+        owner_pos = self._last_seen.get(f["holder"])
+        if owner_pos is None:
+            return False
+        r2 = rsus_in_range(owner_pos, self.rsus, RSU_RANGE_M)
+        if not r2:
+            return False
+        p2 = (self.rsus[r2[0]]["x"], self.rsus[r2[0]]["y"])
+        t_dn = transmission_delay(task.result_bits, distance(owner_pos, p2), V2I_LINK)
+        if t_dn == INF:
+            return False
+        tx_time = t_dn
+        if f["mode"] == "v2v":   # 執行車那端也要先把結果送上基礎設施
+            ep = self.veh_states.get(f["helper"])
+            helper_pos = ep["pos"] if ep is not None else self._last_seen.get(f["helper"])
+            if helper_pos is None:
+                return False
+            r1 = rsus_in_range(helper_pos, self.rsus, RSU_RANGE_M)
+            if not r1:
+                return False
+            p1 = (self.rsus[r1[0]]["x"], self.rsus[r1[0]]["y"])
+            t_up = transmission_delay(task.result_bits,
+                                      distance(helper_pos, p1), V2I_LINK)
+            if t_up == INF:
+                return False
+            tx_time += t_up
+        extra = RSU_EXTRA_LATENCY + tx_time
+        new_total = f["total"] + extra
+        new_energy = f["energy"] + TX_POWER_W * tx_time
+        ok = new_total <= task.deadline_s
+        self.stats["break_recovered"] += 1
+        self.stats["arrival_delivered"] += 1
+        self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
+        new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
+                       + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
+        self._settle_delta += new_reward - f["pred_reward"]
+        return True
 
     def _settle_one(self, f):
         task = f["task"]
@@ -520,7 +581,9 @@ class VECMultiEnv:
         #     交給其最後位置附近的 RSU(用 _last_seen 快取) → 仍可走 V2I 遷移。
         self.stats["link_break"] += 1
         if hp is None:
-            self.stats["consumer_left"] += 1   # break_failed 的子類(帳務仍計 break_failed)
+            self.stats["consumer_left"] += 1   # 車主離場事件
+            if self.arrival_delivery and self._deliver_to_departed(f):
+                return                          # 抵達補送成功(可能仍超時，已入帳)
         elif self.recovery == "v2i":
             helper_pos = ep["pos"] if ep is not None else self._last_seen.get(f["helper"])
             if helper_pos is not None:
@@ -544,11 +607,8 @@ class VECMultiEnv:
                                        + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
                         self._settle_delta += new_reward - f["pred_reward"]
                         return
-        # 無法恢復(持有車離場、策略=fail、或任一側無 RSU 覆蓋)
-        self.stats["break_failed"] += 1
-        self.stats["fail"] += 1
-        self._record_kind(task.kind, False)
-        self._settle_delta += (-PENALTY_FAIL) - f["pred_reward"]
+        # 無法恢復(持有車離場且無法補送、策略=fail、或任一側無 RSU 覆蓋)
+        self._fail_tail(f)
 
     # ---------- 介面 ----------
     def greedy_actions(self):
@@ -591,7 +651,8 @@ class VECMultiEnv:
                       "link_break": 0,       # 執行期真實斷線事件(= recovered+failed)
                       "break_recovered": 0,  # 斷線但經 V2I 遷移救回(可能仍超時)
                       "break_failed": 0,     # 斷線且無法恢復 → 任務失敗
-                      "consumer_left": 0,    # 其中：持有車已離場(結果無人接收，break_failed 子類)
+                      "consumer_left": 0,    # 車主離場事件數(≤ link_break)
+                      "arrival_delivered": 0,  # 其中經「抵達補送」救回者(break_recovered 子類)
                       "rsu_handover": 0,     # RSU/雲結果經「換手」由新服務基站送達(非斷線)
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
@@ -686,6 +747,7 @@ class VECMultiEnv:
                 "break_recovered": s["break_recovered"],
                 "break_failed": s["break_failed"],
                 "consumer_left": s["consumer_left"],
+                "arrival_delivered": s["arrival_delivered"],
                 "rsu_handover": s["rsu_handover"],
                 "fallback": s["fallback"],
                 "by_target": dict(s["by_target"])}

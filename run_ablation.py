@@ -26,10 +26,14 @@ import numpy as np
 from vec_env_ma import VECMultiEnv, SCRIPT_DIR
 
 # 預判器消融階梯：naive(linear) → 可部署(kalman，僅 BSM 觀測) → oracle(route，意圖分享)
-COMBOS = [(p, r) for p in ("linear", "kalman", "route")
-          for r in ("fail", "v2i")]
+# 恢復軸：fail → v2i → v2i+arr(抵達補送：車主離場後結果經基礎設施補送至停靠處)
+COMBOS = [("linear", "fail", False), ("linear", "v2i", False),
+          ("kalman", "fail", False), ("kalman", "v2i", False),
+          ("kalman", "v2i", True),
+          ("route", "fail", False), ("route", "v2i", False),
+          ("route", "v2i", True)]
 EVENT_KEYS = ("pred_reject", "link_break", "break_recovered", "break_failed",
-              "consumer_left", "rsu_handover")
+              "consumer_left", "arrival_delivered", "rsu_handover")
 
 
 def run_episodes(env, mode, algo=None, episodes=6, seed0=2000):
@@ -110,17 +114,21 @@ def main():
         print(f"\n── 策略：{pol} ──")
         print(f"  {'predictor':9}{'recovery':9}{'成功率%':>8}{'vision%':>8}"
               f"{'延遲ms':>8}{'能耗J':>7}{'成本':>7}"
-              f"{'預判拒':>7}{'斷線':>5}{'救回':>5}{'損失':>5}{'客離場':>6}{'換手':>5}")
-        for pred, rec in COMBOS:
-            env = VECMultiEnv(**base_cfg, predictor=pred, recovery=rec)
+              f"{'預判拒':>7}{'斷線':>5}{'救回':>5}{'損失':>5}"
+              f"{'客離場':>6}{'補送':>5}{'換手':>5}")
+        for pred, rec, arr in COMBOS:
+            rec_lbl = rec + ("+arr" if arr else "")
+            env = VECMultiEnv(**base_cfg, predictor=pred, recovery=rec,
+                              arrival_delivery=arr)
             r = run_episodes(env, pol, algo=algo, episodes=episodes)
             env.close()
-            results[f"{pol}/{pred}/{rec}"] = r
-            print(f"  {pred:9}{rec:9}{r['success']:8.1f}{r['vision']:8.1f}"
+            results[f"{pol}/{pred}/{rec_lbl}"] = r
+            print(f"  {pred:9}{rec_lbl:9}{r['success']:8.1f}{r['vision']:8.1f}"
                   f"{r['latency']:8.0f}{r['energy']:7.2f}{r['cost']:7.3f}"
                   f"{r['pred_reject']:7d}{r['link_break']:5d}"
                   f"{r['break_recovered']:5d}{r['break_failed']:5d}"
-                  f"{r['consumer_left']:6d}{r['rsu_handover']:5d}")
+                  f"{r['consumer_left']:6d}{r['arrival_delivered']:5d}"
+                  f"{r['rsu_handover']:5d}")
 
     out = os.path.join(SCRIPT_DIR, "ablation_results.json")
     with open(out, "w", encoding="utf-8") as f:
@@ -132,14 +140,14 @@ def main():
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         pol = "mappo" if "mappo" in policies else "greedy"
-        labels = [f"{p}\n{r}" for p, r in COMBOS]
-        keys = [f"{pol}/{p}/{r}" for p, r in COMBOS]
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        labels = [f"{p}\n{r + ('+arr' if a else '')}" for p, r, a in COMBOS]
+        keys = [f"{pol}/{p}/{r + ('+arr' if a else '')}" for p, r, a in COMBOS]
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
         sr = [results[k]["success"] for k in keys]
         sd = [results[k]["success_std"] for k in keys]
         axes[0].bar(labels, sr, yerr=sd, capsize=4,
-                    color=["#cfd8dc", "#90a4ae", "#90caf9", "#42a5f5",
-                           "#1e88e5", "#0d47a1"][:len(keys)],
+                    color=["#cfd8dc", "#90a4ae", "#bbdefb", "#64b5f6", "#66bb6a",
+                           "#42a5f5", "#1e88e5", "#2e7d32"][:len(keys)],
                     edgecolor="black", linewidth=0.6)
         axes[0].set_ylabel("Task Success Rate (%)")
         axes[0].set_title(f"Ablation: predictor × recovery ({pol}, {tag})")

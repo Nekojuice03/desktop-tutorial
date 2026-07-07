@@ -173,8 +173,28 @@ check("帳務：fail = miss + infeasible + pred_reject + break_failed",
       + st["pred_reject"] + st["break_failed"])
 check("帳務：link_break = recovered + failed",
       s["link_break"] == s["break_recovered"] + s["break_failed"])
-check("帳務：consumer_left ⊆ break_failed",
-      s["consumer_left"] <= s["break_failed"])
+check("帳務：consumer_left ≤ link_break(車主離場為斷線事件子類)",
+      s["consumer_left"] <= s["link_break"])
+
+# 抵達補送(arrival_delivery)白箱測試：mock 車輛不會離場，直接餵一筆
+# 「車主已離場」的在途任務給結算器，驗證補送路徑與計數正確。
+from task_model import Task as _Task
+env_ad = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24,
+                     server_ratio=0.45, episode_ticks=10, arrival_delivery=True)
+env_ad.reset(seed=3)
+_t = _Task("tad", "cX", "nav", data_bits=2e6, cpu_cycles=0.5e9,
+           deadline_s=5.0, created_at=0.0, result_bits=2e5)
+env_ad._last_seen["ghost_owner"] = (100.0, 0.0)   # 停靠處在 rsu_0(0,0) 覆蓋內
+env_ad._settle_one({"mode": "infra", "task": _t, "helper": "rsu_0",
+                    "holder": "ghost_owner", "serving_rsu": "rsu_0",
+                    "t_done": 0.0, "total": 0.5, "energy": 1.0,
+                    "cost": 0.0, "pred_reward": -1.0})
+sa = env_ad.stats
+check("抵達補送：車主離場經 RSU 補送成功且計數正確",
+      sa["arrival_delivered"] == 1 and sa["break_recovered"] == 1
+      and sa["consumer_left"] == 1 and sa["break_failed"] == 0
+      and sa["success"] == 1)
+env_ad.close()
 check("回合有實際處理任務(>200)", st["latency_n"] > 200, f"{st['latency_n']} 筆")
 env.close()
 
