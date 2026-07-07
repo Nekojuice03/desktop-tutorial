@@ -143,10 +143,12 @@ def main():
                     edgecolor="black", linewidth=0.6)
         axes[0].set_ylabel("Task Success Rate (%)")
         axes[0].set_title(f"Ablation: predictor × recovery ({pol}, {tag})")
-        x = np.arange(len(keys)); w = 0.27
-        for off, key, lbl, col in ((-w, "pred_reject", "Predicted-reject", "#ffa726"),
-                                   (0, "break_recovered", "Break-recovered", "#66bb6a"),
-                                   (w, "break_failed", "Break-failed", "#ef5350")):
+        x = np.arange(len(keys)); w = 0.21
+        for off, key, lbl, col in (
+                (-1.5 * w, "pred_reject", "Predicted-reject", "#ffa726"),
+                (-0.5 * w, "break_recovered", "Break-recovered", "#66bb6a"),
+                (0.5 * w, "break_failed", "Break-failed", "#ef5350"),
+                (1.5 * w, "consumer_left", "Consumer-left (owner departed)", "#8e24aa")):
             axes[1].bar(x + off, [results[k][key] for k in keys], w,
                         label=lbl, color=col, edgecolor="black", linewidth=0.6)
         axes[1].set_xticks(x); axes[1].set_xticklabels(labels)

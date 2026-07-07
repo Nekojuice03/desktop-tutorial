@@ -159,16 +159,27 @@ def main():
     if algo is None:
         print("無可用模型 → 使用 greedy 策略展示")
 
-    # SUMO 模式畫路網底圖
+    # SUMO 模式畫路網底圖：★從 osm.sumocfg 讀 net-file，
+    # 避免資料夾裡有多個 *.net.xml 時抓錯底圖(車輛與底圖不同路網)
     net_shapes = []
     if args.sumo:
         try:
             import sumolib
-            import glob
-            hits = [f for f in glob.glob(os.path.join(SCRIPT_DIR, "*.net.xml"))
-                    if os.path.isfile(f)]
-            if hits:
-                net = sumolib.net.readNet(hits[0])
+            import xml.etree.ElementTree as ET
+            net_file = None
+            cfg_path = os.path.join(SCRIPT_DIR, "osm.sumocfg")
+            if os.path.exists(cfg_path):
+                nf = ET.parse(cfg_path).getroot().find(".//net-file")
+                if nf is not None:
+                    net_file = os.path.join(SCRIPT_DIR, nf.get("value"))
+            if net_file is None or not os.path.isfile(net_file):
+                import glob
+                hits = [f for f in glob.glob(os.path.join(SCRIPT_DIR, "*.net.xml"))
+                        if os.path.isfile(f)]
+                net_file = hits[0] if hits else None
+            if net_file:
+                print(f"底圖路網：{os.path.basename(net_file)}")
+                net = sumolib.net.readNet(net_file)
                 net_shapes = [e.getShape() for e in net.getEdges()
                               if not e.getID().startswith(":")]
         except Exception:
