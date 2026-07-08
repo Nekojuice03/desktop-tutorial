@@ -28,7 +28,49 @@ TAUS = [0, 1, 2, 4, 8]                 # 孿生延遲(秒)
 PREDICTORS = ["linear", "kalman"]      # route 為 oracle(不受 BSM 延遲影響)，不掃
 
 
+def plot_results(results, pol, tag):
+    """三面板：成功率 / 執行期斷線 / 預判誤殺(對數) —— 誤殺才是劣化機制的主圖。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    colors = {"linear": "#90a4ae", "kalman": "#1565c0"}
+    for pred in PREDICTORS:
+        sr = [results[f"{pol}/{pred}/tau{t}"]["success"] for t in TAUS]
+        lb = [results[f"{pol}/{pred}/tau{t}"]["link_break"] for t in TAUS]
+        pr = [max(results[f"{pol}/{pred}/tau{t}"]["pred_reject"], 0.5)
+              for t in TAUS]   # 0 → 0.5 讓對數座標可畫
+        axes[0].plot(TAUS, sr, "-o", color=colors[pred], label=f"{pred} predictor")
+        axes[1].plot(TAUS, lb, "-o", color=colors[pred], label=f"{pred} predictor")
+        axes[2].plot(TAUS, pr, "-o", color=colors[pred], label=f"{pred} predictor")
+    axes[0].set_xlabel("Digital-twin sync delay τ (s)")
+    axes[0].set_ylabel("Task Success Rate (%)")
+    axes[0].set_title(f"Success vs twin staleness ({pol}, {tag})")
+    axes[1].set_xlabel("Digital-twin sync delay τ (s)")
+    axes[1].set_ylabel("Runtime link breaks (all episodes)")
+    axes[1].set_title("Mobility failures vs twin staleness")
+    axes[2].set_xlabel("Digital-twin sync delay τ (s)")
+    axes[2].set_ylabel("Predicted-reject count (log)")
+    axes[2].set_yscale("log")
+    axes[2].set_title("Over-conservatism vs twin staleness")
+    for ax in axes:
+        ax.grid(alpha=0.3); ax.legend()
+    plt.tight_layout()
+    fp = os.path.join(SCRIPT_DIR, "fig_dt_delay.png")
+    plt.savefig(fp, dpi=150); plt.close()
+    print(f"已產生 {fp}")
+
+
 def main():
+    # --replot：不重跑模擬，直接用既有 dt_delay_results.json 重繪(補圖用)
+    if "--replot" in sys.argv:
+        out = os.path.join(SCRIPT_DIR, "dt_delay_results.json")
+        results = json.load(open(out, encoding="utf-8"))
+        pol = "mappo" if any(k.startswith("mappo/") for k in results) else "greedy"
+        tag = "SUMO" if "--sumo" in sys.argv else "mock"
+        plot_results(results, pol, tag)
+        return
+
     use_sumo = "--sumo" in sys.argv
     if use_sumo:
         base_cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300,
@@ -79,31 +121,7 @@ def main():
     print(f"\n數據已存 {out}")
 
     if "--plot" in sys.argv:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        pol = "mappo" if "mappo" in policies else "greedy"
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        colors = {"linear": "#90a4ae", "kalman": "#1565c0"}
-        for pred in PREDICTORS:
-            sr = [results[f"{pol}/{pred}/tau{t}"]["success"] for t in TAUS]
-            lb = [results[f"{pol}/{pred}/tau{t}"]["link_break"] for t in TAUS]
-            axes[0].plot(TAUS, sr, "-o", color=colors[pred],
-                         label=f"{pred} predictor")
-            axes[1].plot(TAUS, lb, "-o", color=colors[pred],
-                         label=f"{pred} predictor")
-        axes[0].set_xlabel("Digital-twin sync delay τ (s)")
-        axes[0].set_ylabel("Task Success Rate (%)")
-        axes[0].set_title(f"Success vs twin staleness ({pol}, {tag})")
-        axes[0].grid(alpha=0.3); axes[0].legend()
-        axes[1].set_xlabel("Digital-twin sync delay τ (s)")
-        axes[1].set_ylabel("Runtime link breaks (all episodes)")
-        axes[1].set_title("Mobility failures vs twin staleness")
-        axes[1].grid(alpha=0.3); axes[1].legend()
-        plt.tight_layout()
-        fp = os.path.join(SCRIPT_DIR, "fig_dt_delay.png")
-        plt.savefig(fp, dpi=150); plt.close()
-        print(f"已產生 {fp}")
+        plot_results(results, "mappo" if "mappo" in policies else "greedy", tag)
 
 
 if __name__ == "__main__":
