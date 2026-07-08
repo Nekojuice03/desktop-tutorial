@@ -78,7 +78,7 @@ def record_episode(env, algo, ticks_limit):
     return frames
 
 
-def draw_frame(ax, fr, env, net_shapes, tau):
+def draw_frame(ax, fr, env, net_shapes, tau, bounds=None):
     ax.clear()
     for sh in net_shapes:   # 路網底圖(SUMO 模式)
         ax.plot([p[0] for p in sh], [p[1] for p in sh], color="#e0e0e0",
@@ -127,6 +127,9 @@ def draw_frame(ax, fr, env, net_shapes, tau):
             family="monospace", va="bottom",
             bbox=dict(fc="white", alpha=0.8, ec="none"))
     ax.set_aspect("equal")
+    if bounds:   # 視圖鎖定路網邊界(避免範圍外元素拉歪畫面)
+        ax.set_xlim(bounds[0] - 30, bounds[2] + 30)
+        ax.set_ylim(bounds[1] - 30, bounds[3] + 30)
     ax.legend(loc="upper right", fontsize=7, framealpha=0.9)
 
 
@@ -162,6 +165,7 @@ def main():
     # SUMO 模式畫路網底圖：★從 osm.sumocfg 讀 net-file，
     # 避免資料夾裡有多個 *.net.xml 時抓錯底圖(車輛與底圖不同路網)
     net_shapes = []
+    bounds = None
     if args.sumo:
         try:
             import sumolib
@@ -182,6 +186,22 @@ def main():
                 net = sumolib.net.readNet(net_file)
                 net_shapes = [e.getShape() for e in net.getEdges()
                               if not e.getID().startswith(":")]
+                bounds = net.getBoundary()
+                # ★場景一致性檢查：RSU(rsu_positions.json) 必須落在此路網範圍內。
+                #   不一致 = osm.sumocfg 換了網但 RSU/車流沒重建 → 實驗結果無效！
+                xmin, ymin, xmax, ymax = net.getBoundary()
+                m = 50.0
+                outside = [rid for rid, r in env.rsus.items()
+                           if not (xmin - m <= r["x"] <= xmax + m
+                                   and ymin - m <= r["y"] <= ymax + m)]
+                if outside:
+                    print("=" * 62)
+                    print(f"⚠⚠ 場景不一致：{len(outside)}/{len(env.rsus)} 個 RSU "
+                          f"落在路網範圍外 → rsu_positions.json 是別的路網的！")
+                    print(f"   請對本網重建：python setup_rsu.py --net "
+                          f"{os.path.basename(net_file)} --mode junction --plot")
+                    print(f"   (車流 rou 檔同理需 make_real_flow --net ... --remap)")
+                    print("=" * 62)
         except Exception:
             pass
 
@@ -194,7 +214,7 @@ def main():
     fig, ax = plt.subplots(figsize=(8, 7))
     images = []
     for fr in frames:
-        draw_frame(ax, fr, env2, net_shapes, args.tau)
+        draw_frame(ax, fr, env2, net_shapes, args.tau, bounds)
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=90)
         buf.seek(0)
@@ -207,7 +227,7 @@ def main():
     # 另存一張中段快照(論文靜態圖)
     snap = os.path.join(SCRIPT_DIR, "dt_snapshot.png")
     fig, ax = plt.subplots(figsize=(8, 7))
-    draw_frame(ax, frames[len(frames) // 2], env2, net_shapes, args.tau)
+    draw_frame(ax, frames[len(frames) // 2], env2, net_shapes, args.tau, bounds)
     fig.savefig(snap, dpi=150, bbox_inches="tight")
     plt.close(fig)
     env.close()
