@@ -1,0 +1,612 @@
+<title>Champions 對戰分析台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ---------- 設計代幣 ---------- */
+:root{
+  --bg:#f3f5f9; --panel:#ffffff; --panel-2:#eef1f7; --line:#d9dfea;
+  --ink:#1a2130; --ink-soft:#5a6478; --ink-faint:#8b94a7;
+  --accent:#c8384a; --accent-soft:#f7dfe2;
+  --good:#1f9d68; --warn:#c98a10; --crit:#cf3b34;
+  --shadow:0 1px 2px rgba(20,28,45,.06),0 8px 24px rgba(20,28,45,.06);
+  --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0d1220; --panel:#151d2e; --panel-2:#1c2536; --line:#2a3548;
+    --ink:#e8ecf5; --ink-soft:#a3adc2; --ink-faint:#6b7488;
+    --accent:#f0637a; --accent-soft:#3a1f28;
+    --good:#3fce8c; --warn:#e6b23f; --crit:#f0736b;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="light"]{
+  --bg:#f3f5f9; --panel:#ffffff; --panel-2:#eef1f7; --line:#d9dfea;
+  --ink:#1a2130; --ink-soft:#5a6478; --ink-faint:#8b94a7;
+  --accent:#c8384a; --accent-soft:#f7dfe2;
+  --good:#1f9d68; --warn:#c98a10; --crit:#cf3b34;
+  --shadow:0 1px 2px rgba(20,28,45,.06),0 8px 24px rgba(20,28,45,.06);
+}
+:root[data-theme="dark"]{
+  --bg:#0d1220; --panel:#151d2e; --panel-2:#1c2536; --line:#2a3548;
+  --ink:#e8ecf5; --ink-soft:#a3adc2; --ink-faint:#6b7488;
+  --accent:#f0637a; --accent-soft:#3a1f28;
+  --good:#3fce8c; --warn:#e6b23f; --crit:#f0736b;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+  line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px 80px}
+h1,h2,h3{text-wrap:balance;margin:0}
+a{color:inherit}
+.tnum{font-variant-numeric:tabular-nums;font-family:var(--mono)}
+
+/* ---------- 頁首 ---------- */
+header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.head-in{max-width:1080px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:11px;margin-right:auto}
+.mark{width:34px;height:34px;border-radius:9px;background:
+  radial-gradient(circle at 50% 32%,#fff 0 32%,transparent 33%),
+  linear-gradient(180deg,var(--accent) 0 50%,#2b3444 50% 100%);
+  border:2px solid var(--ink);position:relative;flex:none;box-shadow:var(--shadow)}
+.mark::after{content:"";position:absolute;inset:44% 0 auto;height:2px;background:var(--ink)}
+.brand b{font-size:16px;letter-spacing:.2px;display:block;font-weight:800}
+.brand span{font-size:11.5px;color:var(--ink-faint);letter-spacing:.4px}
+.ctrl{display:flex;align-items:center;gap:8px;font-size:13px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel)}
+.seg button{border:0;background:transparent;color:var(--ink-soft);padding:6px 11px;font:inherit;
+  font-size:12.5px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:700}
+
+/* ---------- 分頁 ---------- */
+nav.tabs{display:flex;gap:6px;max-width:1080px;margin:16px auto 0;padding:0 20px;flex-wrap:wrap}
+.tab{border:1px solid var(--line);background:var(--panel);color:var(--ink-soft);
+  padding:9px 15px;border-radius:10px 10px 0 0;font:inherit;font-weight:600;font-size:14px;
+  cursor:pointer;border-bottom:0;position:relative;top:1px}
+.tab[aria-selected="true"]{background:var(--panel);color:var(--ink);
+  box-shadow:0 -2px 0 var(--accent) inset;border-color:var(--line)}
+.tab small{display:block;font-weight:400;font-size:10.5px;color:var(--ink-faint);letter-spacing:.3px}
+
+/* ---------- 面板 ---------- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:0 14px 14px 14px;
+  box-shadow:var(--shadow);padding:22px;margin-top:-1px}
+.lead{color:var(--ink-soft);font-size:14px;max-width:64ch}
+.eyebrow{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--accent);font-weight:700}
+section+section{margin-top:26px}
+.grid{display:grid;gap:14px}
+@media(min-width:720px){.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}}
+
+/* 卡片 */
+.card{border:1px solid var(--line);border-radius:12px;background:var(--panel-2);padding:15px}
+.card h3{font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.usage{margin-left:auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;
+  background:var(--accent-soft);color:var(--accent)}
+.plan{font-size:13px;color:var(--ink-soft);margin:9px 0}
+.corelist{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.mchip{display:inline-flex;align-items:center;gap:5px;font-size:12px;background:var(--panel);
+  border:1px solid var(--line);border-radius:20px;padding:3px 9px 3px 4px}
+.mchip .dot{width:8px;height:8px;border-radius:50%}
+.mchip b{font-weight:700}.mchip em{font-style:normal;color:var(--ink-faint);font-size:11px}
+.metaline{font-size:12px;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;margin-top:7px}
+.metaline .k{color:var(--ink-faint);flex:none}
+.tag{font-size:11px;padding:2px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel)}
+.note{font-size:12px;color:var(--warn);margin-top:8px;display:flex;gap:6px}
+
+/* 屬性標籤 */
+.ty{display:inline-block;color:#fff;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:5px;
+  letter-spacing:.3px;text-shadow:0 1px 1px rgba(0,0,0,.25)}
+
+/* 表單 */
+label.f{display:block;font-size:12px;color:var(--ink-soft);font-weight:600;margin-bottom:5px}
+select,input[type=number]{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:9px;
+  background:var(--panel);color:var(--ink);font:inherit;font-size:14px}
+select:focus,input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.field{margin-bottom:12px}
+.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1;min-width:120px}
+.check{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-soft);cursor:pointer}
+.btn{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:11px 18px;font:inherit;
+  font-weight:700;cursor:pointer;font-size:14px}
+.btn:hover{filter:brightness(1.05)}
+
+/* 結果 */
+.result{margin-top:16px;border-top:1px dashed var(--line);padding-top:16px}
+.big{font-size:15px;font-weight:800;margin-bottom:4px}
+.callout{border-radius:11px;padding:13px 15px;border:1px solid var(--line);margin-top:10px;font-size:13.5px}
+.callout.good{background:color-mix(in srgb,var(--good) 12%,var(--panel));border-color:color-mix(in srgb,var(--good) 40%,var(--line))}
+.callout.crit{background:color-mix(in srgb,var(--crit) 12%,var(--panel));border-color:color-mix(in srgb,var(--crit) 40%,var(--line))}
+.callout.warn{background:color-mix(in srgb,var(--warn) 12%,var(--panel));border-color:color-mix(in srgb,var(--warn) 40%,var(--line))}
+.callout .lbl{font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;opacity:.8}
+.spread{font-family:var(--mono);font-weight:700;font-size:15px}
+.bar{height:9px;border-radius:5px;background:var(--panel-2);overflow:hidden;margin:7px 0;border:1px solid var(--line)}
+.bar>i{display:block;height:100%;border-radius:5px}
+.mut{color:var(--ink-faint);font-size:12px}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:4px 0;border-bottom:1px solid var(--line)}
+.kv:last-child{border-bottom:0}.kv b{font-family:var(--mono)}
+
+/* counter list */
+.cnt{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+.cnt:last-child{border-bottom:0}
+.rank{width:24px;height:24px;flex:none;border-radius:7px;background:var(--panel-2);border:1px solid var(--line);
+  display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:12px}
+.cnt .who{flex:none;min-width:130px}.cnt .who b{font-size:13.5px}
+.cnt .badges{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto;justify-content:flex-end}
+.badge{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);white-space:nowrap}
+.badge.res{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,var(--line))}
+.badge.hit{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.badge.spd{color:var(--ink-soft)}
+.disc{font-size:12px;color:var(--ink-faint);border:1px dashed var(--line);border-radius:10px;padding:10px 12px;margin-top:14px}
+footer{max-width:1080px;margin:26px auto 0;padding:0 20px;font-size:12px;color:var(--ink-faint)}
+.hidden{display:none}
+</style>
+
+<header>
+  <div class="head-in">
+    <div class="brand">
+      <div class="mark" aria-hidden="true"></div>
+      <div><b>Champions 對戰分析台</b><span>組隊 · 環境 · 努力值規劃</span></div>
+    </div>
+    <div class="ctrl">
+      <span class="mut">等級</span>
+      <span class="seg" id="lvlSeg" role="group" aria-label="對戰等級">
+        <button data-lvl="50" aria-pressed="true">Lv.50</button>
+        <button data-lvl="100" aria-pressed="false">Lv.100</button>
+      </span>
+      <span class="seg" id="themeSeg" role="group" aria-label="佈景">
+        <button data-th="light" aria-pressed="false">☀</button>
+        <button data-th="dark" aria-pressed="false">☾</button>
+      </span>
+    </div>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab" role="tab" aria-selected="true" data-tab="meta">主流隊伍<small>METAGAME</small></button>
+  <button class="tab" role="tab" aria-selected="false" data-tab="counter">應對搭配<small>COUNTERS</small></button>
+  <button class="tab" role="tab" aria-selected="false" data-tab="speed">速度超車<small>SPEED TIERS</small></button>
+  <button class="tab" role="tab" aria-selected="false" data-tab="bulk">存活配點<small>SURVIVAL EVs</small></button>
+</nav>
+
+<div class="wrap">
+
+  <!-- ===== 主流隊伍 ===== -->
+  <div class="panel" id="tab-meta">
+    <div class="eyebrow">環境概觀</div>
+    <h2 style="font-size:22px;margin:4px 0 8px">目前主流的隊伍骨架</h2>
+    <p class="lead">以下為現代雙打／VGC 環境常見的六大骨架與其遊玩計畫、核心威脅與天敵。點各隊卡片下方的
+      「天敵」可快速跳到<b>應對搭配</b>做深入分析。</p>
+    <div class="grid g2" id="metaGrid" style="margin-top:18px"></div>
+    <div class="disc" id="metaDisc"></div>
+  </div>
+
+  <!-- ===== 應對搭配 ===== -->
+  <div class="panel hidden" id="tab-counter">
+    <div class="eyebrow">威脅分析</div>
+    <h2 style="font-size:22px;margin:4px 0 8px">面對主流，帶什麼去打？</h2>
+    <p class="lead">選一隻威脅（或直接載入某支主流隊伍的核心），系統會從圖鑑找出
+      <b>同時抵抗它主打屬性、又能打中它弱點</b>的應對寶可夢，並比較速度。</p>
+    <div class="row" style="margin-top:16px">
+      <div class="field"><label class="f" for="cThreat">威脅寶可夢</label><select id="cThreat"></select></div>
+      <div class="field"><label class="f" for="cTeam">或載入主流隊伍核心</label><select id="cTeam"></select></div>
+    </div>
+    <div id="counterOut"></div>
+  </div>
+
+  <!-- ===== 速度超車 ===== -->
+  <div class="panel hidden" id="tab-speed">
+    <div class="eyebrow">速度線</div>
+    <h2 style="font-size:22px;margin:4px 0 8px">要點多少速度才不會被超車？</h2>
+    <p class="lead">選你的寶可夢與想壓過的目標，算出「剛好超車」所需的最少速度努力值與性格，
+      並可套用<b>命運頭巾（+50%）</b>與<b>順風（×2）</b>。</p>
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card">
+        <div class="field"><label class="f" for="sMine">我方寶可夢</label><select id="sMine"></select></div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="sScarf"> 命運頭巾 ×1.5</label>
+          <label class="check"><input type="checkbox" id="sTail"> 順風 ×2</label>
+        </div>
+      </div>
+      <div class="card">
+        <div class="field"><label class="f" for="sTargetMode">超車目標</label>
+          <select id="sTargetMode">
+            <option value="poke">選一隻對手（用其常見速度）</option>
+            <option value="num">直接輸入目標速度數值</option>
+          </select></div>
+        <div class="field" id="sTargetPokeWrap"><label class="f" for="sTarget">對手寶可夢</label><select id="sTarget"></select></div>
+        <div class="field hidden" id="sTargetNumWrap"><label class="f" for="sTargetNum">目標速度</label>
+          <input type="number" id="sTargetNum" value="150" min="1" max="999"></div>
+        <div class="field" id="sTargetNatWrap"><label class="f" for="sTargetNat">對手速度假設</label>
+          <select id="sTargetNat">
+            <option value="max+">滿速 + 加速性格 (252/+)</option>
+            <option value="max0" selected>滿速中性 (252/中性)</option>
+            <option value="base">無投資 (0/中性)</option>
+          </select></div>
+      </div>
+    </div>
+    <div id="speedOut"></div>
+  </div>
+
+  <!-- ===== 存活配點 ===== -->
+  <div class="panel hidden" id="tab-bulk">
+    <div class="eyebrow">耐久線</div>
+    <h2 style="font-size:22px;margin:4px 0 8px">要點多少耐久才不會被一招帶走？</h2>
+    <p class="lead">設定<b>攻擊方＋招式</b>與<b>你的防守方</b>，系統用第九世代傷害公式，
+      算出「保證擋下最大亂數」所需的最少 HP／防禦努力值配點。</p>
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card">
+        <div class="big">攻擊方</div>
+        <div class="field"><label class="f" for="bAtk">寶可夢</label><select id="bAtk"></select></div>
+        <div class="field"><label class="f" for="bMove">招式</label><select id="bMove"></select></div>
+        <div class="row">
+          <div class="field"><label class="f" for="bAtkInv">攻擊投資</label>
+            <select id="bAtkInv">
+              <option value="252,1.1" selected>252 + 加成性格</option>
+              <option value="252,1.0">252 中性</option>
+              <option value="0,1.0">無投資</option>
+            </select></div>
+          <div class="field"><label class="f" for="bItem">道具</label>
+            <select id="bItem"><option value="none">無</option>
+              <option value="choice">講究類 ×1.5</option>
+              <option value="life">生命寶珠 ×1.3</option></select></div>
+        </div>
+        <div class="field"><label class="f" for="bWeather">天候</label>
+          <select id="bWeather"><option value="none">無</option>
+            <option value="sun">大晴天</option><option value="rain">下雨</option></select></div>
+      </div>
+      <div class="card">
+        <div class="big">你的防守方</div>
+        <div class="field"><label class="f" for="bDef">寶可夢</label><select id="bDef"></select></div>
+        <div class="mut" id="bDefInfo" style="margin-top:6px"></div>
+      </div>
+    </div>
+    <div id="bulkOut"></div>
+  </div>
+
+  <footer>
+    Champions 對戰分析台 · 數值採第九世代標準公式（HP／傷害／速度級距精確）。
+    「主流隊伍」為可編輯的策展資料——Pokémon Champions 官方環境數據尚未公開，請隨版本自行更新
+    <code>META_TEAMS</code>／<code>POKEDEX</code>。
+  </footer>
+</div>
+
+<script>
+/* ==================== 資料 ==================== */
+const TYPES={Normal:{zh:'一般',color:'#9098a1'},Fire:{zh:'火',color:'#e8664e'},Water:{zh:'水',color:'#4d90d5'},Electric:{zh:'電',color:'#e5c531'},Grass:{zh:'草',color:'#63bc5a'},Ice:{zh:'冰',color:'#75d0c1'},Fighting:{zh:'格鬥',color:'#ce4069'},Poison:{zh:'毒',color:'#ab6ac8'},Ground:{zh:'地面',color:'#d97845'},Flying:{zh:'飛行',color:'#8caadc'},Psychic:{zh:'超能',color:'#f66f88'},Bug:{zh:'蟲',color:'#90c12c'},Rock:{zh:'岩石',color:'#c7b78b'},Ghost:{zh:'幽靈',color:'#5269ad'},Dragon:{zh:'龍',color:'#0b6dc3'},Dark:{zh:'惡',color:'#5a5366'},Steel:{zh:'鋼',color:'#5a8ea1'},Fairy:{zh:'妖精',color:'#ec8fe6'}};
+const TYPECHART={Normal:{Rock:.5,Ghost:0,Steel:.5},Fire:{Fire:.5,Water:.5,Grass:2,Ice:2,Bug:2,Rock:.5,Dragon:.5,Steel:2},Water:{Fire:2,Water:.5,Grass:.5,Ground:2,Rock:2,Dragon:.5},Electric:{Water:2,Electric:.5,Grass:.5,Ground:0,Flying:2,Dragon:.5},Grass:{Fire:.5,Water:2,Grass:.5,Poison:.5,Ground:2,Flying:.5,Bug:.5,Rock:2,Dragon:.5,Steel:.5},Ice:{Fire:.5,Water:.5,Grass:2,Ice:.5,Ground:2,Flying:2,Dragon:2,Steel:.5},Fighting:{Normal:2,Ice:2,Poison:.5,Flying:.5,Psychic:.5,Bug:.5,Rock:2,Ghost:0,Dark:2,Steel:2,Fairy:.5},Poison:{Grass:2,Poison:.5,Ground:.5,Rock:.5,Ghost:.5,Steel:0,Fairy:2},Ground:{Fire:2,Electric:2,Grass:.5,Poison:2,Flying:0,Bug:.5,Rock:2,Steel:2},Flying:{Electric:.5,Grass:2,Fighting:2,Bug:2,Rock:.5,Steel:.5},Psychic:{Fighting:2,Poison:2,Psychic:.5,Dark:0,Steel:.5},Bug:{Fire:.5,Grass:2,Fighting:.5,Poison:.5,Flying:.5,Psychic:2,Ghost:.5,Dark:2,Steel:.5,Fairy:.5},Rock:{Fire:2,Ice:2,Fighting:.5,Ground:.5,Flying:2,Bug:2,Steel:.5},Ghost:{Normal:0,Psychic:2,Ghost:2,Dark:.5},Dragon:{Dragon:2,Steel:.5,Fairy:0},Dark:{Fighting:.5,Psychic:2,Ghost:2,Dark:.5,Fairy:.5},Steel:{Fire:.5,Water:.5,Electric:.5,Ice:2,Rock:2,Steel:.5,Fairy:2},Fairy:{Fire:.5,Fighting:2,Poison:.5,Dragon:2,Dark:2,Steel:.5}};
+const POKEDEX={
+incineroar:{name:'Incineroar',zh:'熾焰咆哮虎',types:['Fire','Dark'],base:[95,115,90,80,90,60],role:'威嚇支援',tier:'S'},
+rillaboom:{name:'Rillaboom',zh:'轟擂金剛猩',types:['Grass'],base:[100,125,90,60,70,85],role:'場地物攻',tier:'S'},
+fluttermane:{name:'Flutter Mane',zh:'振翼發',types:['Ghost','Fairy'],base:[55,55,55,135,135,135],role:'速攻特攻',tier:'S'},
+ironhands:{name:'Iron Hands',zh:'鐵臂膀',types:['Fighting','Electric'],base:[154,140,108,50,68,50],role:'肉盾物攻',tier:'S'},
+amoonguss:{name:'Amoonguss',zh:'敗露球菇',types:['Grass','Poison'],base:[114,85,70,85,80,30],role:'孢子控場',tier:'A'},
+landorust:{name:'Landorus-T',zh:'土地雲(靈獸)',types:['Ground','Flying'],base:[89,145,90,105,80,91],role:'威嚇地面',tier:'S'},
+urshifu:{name:'Urshifu',zh:'一擊師',types:['Fighting','Dark'],base:[100,130,100,63,60,97],role:'穿透物攻',tier:'A'},
+urshifurapid:{name:'Urshifu-Rapid',zh:'連擊師',types:['Fighting','Water'],base:[100,130,100,63,60,97],role:'穿透物攻',tier:'S'},
+chiyu:{name:'Chi-Yu',zh:'魔火恟',types:['Dark','Fire'],base:[55,80,80,135,120,100],role:'災厄特攻',tier:'S'},
+chienpao:{name:'Chien-Pao',zh:'古劍豹',types:['Dark','Ice'],base:[80,120,80,90,65,135],role:'災厄速攻',tier:'S'},
+tinglu:{name:'Ting-Lu',zh:'吃吼霸',types:['Dark','Ground'],base:[155,110,125,55,80,45],role:'災厄坦克',tier:'A'},
+tornadus:{name:'Tornadus',zh:'龍捲雲',types:['Flying'],base:[79,115,70,125,80,111],role:'順風特攻',tier:'A'},
+gholdengo:{name:'Gholdengo',zh:'賽富豪',types:['Steel','Ghost'],base:[87,60,95,133,91,84],role:'特攻擋道具',tier:'S'},
+ogerpon:{name:'Ogerpon',zh:'厄鬼椪',types:['Grass'],base:[80,120,84,60,96,110],role:'物攻',tier:'A'},
+ragingbolt:{name:'Raging Bolt',zh:'轟雷鼓',types:['Electric','Dragon'],base:[125,73,91,137,89,75],role:'特攻坦克',tier:'A'},
+ironvaliant:{name:'Iron Valiant',zh:'鐵武者',types:['Fairy','Fighting'],base:[74,130,90,120,60,116],role:'雙刀速攻',tier:'A'},
+calyrexshadow:{name:'Calyrex-Shadow',zh:'蒼響(騎黑馬)',types:['Psychic','Ghost'],base:[100,85,80,165,100,150],role:'限制級特攻',tier:'Legend'},
+calyrexice:{name:'Calyrex-Ice',zh:'蕾冠王(騎白馬)',types:['Psychic','Ice'],base:[100,165,150,85,130,50],role:'限制級物攻',tier:'Legend'},
+miraidon:{name:'Miraidon',zh:'密勒頓',types:['Electric','Dragon'],base:[100,85,100,143,120,135],role:'限制級電場',tier:'Legend'},
+koraidon:{name:'Koraidon',zh:'故勒頓',types:['Fighting','Dragon'],base:[100,135,115,85,100,135],role:'限制級晴天',tier:'Legend'},
+zacian:{name:'Zacian-Crowned',zh:'蒼響劍王',types:['Fairy','Steel'],base:[92,170,115,80,115,148],role:'限制級物攻',tier:'Legend'},
+kyogre:{name:'Kyogre',zh:'蓋歐卡',types:['Water'],base:[100,100,90,150,140,90],role:'限制級雨天',tier:'Legend'},
+groudon:{name:'Groudon',zh:'固拉多',types:['Ground'],base:[100,150,140,100,90,90],role:'限制級晴天',tier:'Legend'},
+farigiraf:{name:'Farigiraf',zh:'奇麒麟',types:['Normal','Psychic'],base:[120,90,70,110,70,60],role:'防守支援',tier:'A'},
+dondozo:{name:'Dondozo',zh:'吃吼鯨',types:['Water'],base:[150,100,115,65,65,35],role:'物理坦克',tier:'A'},
+tatsugiri:{name:'Tatsugiri',zh:'米立龍',types:['Dragon','Water'],base:[68,50,60,120,95,82],role:'指令搭檔',tier:'B'},
+kingambit:{name:'Kingambit',zh:'仆刀將軍',types:['Dark','Steel'],base:[100,135,120,60,85,50],role:'收尾物攻',tier:'A'},
+dragapult:{name:'Dragapult',zh:'多龍巴魯托',types:['Dragon','Ghost'],base:[88,120,75,100,75,142],role:'高速雙刀',tier:'A'},
+garchomp:{name:'Garchomp',zh:'烈咬陸鯊',types:['Dragon','Ground'],base:[108,130,95,80,85,102],role:'物攻沙隊',tier:'B'},
+dragonite:{name:'Dragonite',zh:'快龍',types:['Dragon','Flying'],base:[91,134,95,100,100,80],role:'物攻先制',tier:'B'},
+glimmora:{name:'Glimmora',zh:'晶光沙晶',types:['Rock','Poison'],base:[83,55,90,130,81,86],role:'毒菱特攻',tier:'B'},
+palafin:{name:'Palafin-Hero',zh:'海豚俠(英雄)',types:['Water'],base:[100,160,97,106,87,100],role:'變身物攻',tier:'A'},
+volcarona:{name:'Volcarona',zh:'火神蛾',types:['Bug','Fire'],base:[85,60,65,135,105,100],role:'蝶舞特攻',tier:'B'},
+pelipper:{name:'Pelipper',zh:'大嘴鷗',types:['Water','Flying'],base:[60,50,100,95,70,65],role:'雨天啟動',tier:'A'},
+torkoal:{name:'Torkoal',zh:'煤炭龜',types:['Fire'],base:[70,85,140,85,70,20],role:'晴天啟動',tier:'A'},
+grimmsnarl:{name:'Grimmsnarl',zh:'長毛巨魔',types:['Dark','Fairy'],base:[95,120,65,95,75,60],role:'雙壁支援',tier:'A'},
+indeedeef:{name:'Indeedee-F',zh:'愛管侍(雌)',types:['Psychic','Normal'],base:[70,55,65,95,105,85],role:'防守指令',tier:'A'},
+whimsicott:{name:'Whimsicott',zh:'風妖精',types:['Grass','Fairy'],base:[60,67,85,77,75,116],role:'順風搗亂',tier:'B'},
+kingdra:{name:'Kingdra',zh:'刺龍王',types:['Water','Dragon'],base:[75,95,95,95,95,85],role:'雨天特攻',tier:'B'},
+archaludon:{name:'Archaludon',zh:'鋁鋼橋龍',types:['Steel','Dragon'],base:[90,105,130,125,65,85],role:'電場特攻',tier:'A'},
+ursalunabm:{name:'Ursaluna-BM',zh:'月月熊(血月)',types:['Ground','Normal'],base:[113,70,120,135,65,52],role:'特攻坦克',tier:'A'},
+gastrodon:{name:'Gastrodon',zh:'無殼海兔',types:['Water','Ground'],base:[111,83,68,92,82,39],role:'蓄水坦克',tier:'B'},
+talonflame:{name:'Talonflame',zh:'烈箭鷹',types:['Fire','Flying'],base:[78,81,71,74,69,126],role:'先制順風',tier:'B'},
+annihilape:{name:'Annihilape',zh:'棄世猴',types:['Fighting','Ghost'],base:[110,115,80,50,90,90],role:'憤怒物攻',tier:'B'}};
+const MOVES={closecombat:{zh:'近身戰',type:'Fighting',cat:'Physical',power:120},flareblitz:{zh:'閃焰衝鋒',type:'Fire',cat:'Physical',power:120},woodhammer:{zh:'木槌',type:'Grass',cat:'Physical',power:120},gravapple:{zh:'重力蘋果',type:'Grass',cat:'Physical',power:80},earthquake:{zh:'地震',type:'Ground',cat:'Physical',power:100},headlongrush:{zh:'突飛猛撲',type:'Ground',cat:'Physical',power:120},icespinner:{zh:'冰旋',type:'Ice',cat:'Physical',power:80},iciclecrash:{zh:'冰柱墜擊',type:'Ice',cat:'Physical',power:85},glaciallance:{zh:'雪嶺長矛',type:'Ice',cat:'Physical',power:120},behemothblade:{zh:'巨獸斬',type:'Steel',cat:'Physical',power:100},suckerpunch:{zh:'突襲',type:'Dark',cat:'Physical',power:70},wickedblow:{zh:'必殺暗影拳',type:'Dark',cat:'Physical',power:75},surgingstrikes:{zh:'水流連打(單發)',type:'Water',cat:'Physical',power:75},ivycudgel:{zh:'棘藤棒',type:'Grass',cat:'Physical',power:100},collisioncourse:{zh:'撞擊猛墜',type:'Fighting',cat:'Physical',power:100},fakeout:{zh:'擊掌奇襲',type:'Normal',cat:'Physical',power:40},moonblast:{zh:'月亮之力',type:'Fairy',cat:'Special',power:95},shadowball:{zh:'暗影球',type:'Ghost',cat:'Special',power:80},astralbarrage:{zh:'星塵射線',type:'Ghost',cat:'Special',power:120},makeitrain:{zh:'淘金潮',type:'Steel',cat:'Special',power:120},dracometeor:{zh:'流星群',type:'Dragon',cat:'Special',power:130},dragonpulse:{zh:'龍之波動',type:'Dragon',cat:'Special',power:85},heatwave:{zh:'熱風',type:'Fire',cat:'Special',power:95},overheat:{zh:'過熱',type:'Fire',cat:'Special',power:130},thunderbolt:{zh:'十萬伏特',type:'Electric',cat:'Special',power:90},electrodrift:{zh:'電光猛衝',type:'Electric',cat:'Special',power:100},icebeam:{zh:'冰凍光束',type:'Ice',cat:'Special',power:90},hydropump:{zh:'水炮',type:'Water',cat:'Special',power:110},originpulse:{zh:'根源波動',type:'Water',cat:'Special',power:110},bleakwindstorm:{zh:'枯葉風暴',type:'Flying',cat:'Special',power:100},dazzlinggleam:{zh:'魔法閃耀',type:'Fairy',cat:'Special',power:80},sludgebomb:{zh:'污泥炸彈',type:'Poison',cat:'Special',power:90}};
+const META_TEAMS=[
+{id:'sun',name:'晴天爆發 Sun',style:'天候·爆發',usage:'高',core:['torkoal','fluttermane','incineroar','rillaboom','ironhands','amoonguss'],plan:'煤炭龜開晴天強化火系並激活葉綠素高速手；振翼發在無防禦弱點下以超高特攻掃場，鐵臂膀可切換房間作第二軸線。',keyThreats:['fluttermane','chiyu','ironhands'],counters:['tinglu','ragingbolt','gastrodon'],note:'怕雨天搶天候與吃吼霸類特殊坦克站場。'},
+{id:'rain',name:'雨天壓制 Rain',style:'天候·壓制',usage:'高',core:['pelipper','urshifurapid','kingdra','archaludon','amoonguss','incineroar'],plan:'大嘴鷗降雨；連擊師「水流連打」無視保護且必爆、刺龍王雨下超速強水炮輸出；鋁鋼橋龍長線消耗。',keyThreats:['urshifurapid','kingdra','archaludon'],counters:['ragingbolt','fluttermane','amoonguss'],note:'需提防對面搶晴天與草系抵抗水攻。'},
+{id:'ruin',name:'災厄四聖核 Ruinous',style:'數值壓制',usage:'高',core:['chiyu','chienpao','tinglu','fluttermane','ironhands','rillaboom'],plan:'魔火恟降全場特防、古劍豹降全場物防形成雙向破防；吃吼霸削全場速度，配振翼發輸出滾雪球。',keyThreats:['chiyu','chienpao','fluttermane'],counters:['ironhands','incineroar','ragingbolt'],note:'脆皮居多，怕先制與擊掌奇襲打亂節奏。'},
+{id:'tr',name:'房間隊 Trick Room',style:'反速·爆發',usage:'中',core:['ironhands','calyrexice','incineroar','amoonguss','farigiraf','ursalunabm'],plan:'奇麒麟／敗露球菇開房間，房間內鐵臂膀、蕾冠王(白馬)、血月熊等超低速高攻先手；熾焰咆哮虎威嚇壓制。',keyThreats:['calyrexice','ironhands','ursalunabm'],counters:['fluttermane','chienpao','whimsicott'],note:'怕順風／場地打斷房間節奏，需保護核心開手。'},
+{id:'tw',name:'順風高速 Tailwind HO',style:'速度壓制',usage:'中',core:['tornadus','chienpao','fluttermane','landorust','urshifu','gholdengo'],plan:'龍捲雲首回合順風全隊加速，古劍豹／振翼發等高速手超車全場，四回合內以絕對速度差爆發解決。',keyThreats:['chienpao','fluttermane','landorust'],counters:['ironhands','tinglu','amoonguss'],note:'節奏隊，被反順風或電磁波容易崩盤。'},
+{id:'dozo',name:'鎮壓戰術 Dondozo+Tatsugiri',style:'單點坦克',usage:'中',core:['dondozo','tatsugiri','incineroar','amoonguss','fluttermane','rillaboom'],plan:'米立龍「指令」讓吃吼鯨攻擊翻三倍且免疫特殊，配蓄水／淨體大幅提升防禦後單點碾壓，孢子控場保站。',keyThreats:['dondozo'],counters:['gholdengo','fluttermane','whimsicott'],note:'怕挑釁封鎖「指令」、幽靈鋼系無視物攻與剝奪能力。'}];
+
+/* ==================== 引擎 ==================== */
+let LEVEL=50;
+const pokeRound=x=>(x-Math.floor(x)>0.5?Math.ceil(x):Math.floor(x));
+const statHP=(b,ev,iv=31,L=LEVEL)=>b===1?1:Math.floor((2*b+iv+Math.floor(ev/4))*L/100)+L+10;
+const statOther=(b,ev,iv=31,nat=1,L=LEVEL)=>Math.floor((Math.floor((2*b+iv+Math.floor(ev/4))*L/100)+5)*nat);
+function typeMult(mt,dts){let m=1;for(const t of dts){const r=TYPECHART[mt];if(r&&r[t]!==undefined)m*=r[t];}return m;}
+function damageRolls(o){
+  let A=o.atkStat;if(o.item==='choice')A=pokeRound(A*1.5);
+  let base=Math.floor(Math.floor(Math.floor((2*o.level/5+2)*o.power*A/o.defStat)/50)+2);
+  if(o.spread)base=pokeRound(base*0.75);
+  if(o.weather==='sun'&&o.moveType==='Fire')base=pokeRound(base*1.5);
+  if(o.weather==='sun'&&o.moveType==='Water')base=pokeRound(base*0.5);
+  if(o.weather==='rain'&&o.moveType==='Water')base=pokeRound(base*1.5);
+  if(o.weather==='rain'&&o.moveType==='Fire')base=pokeRound(base*0.5);
+  const stab=o.atkTypes.includes(o.moveType)?1.5:1, eff=typeMult(o.moveType,o.defTypes), rolls=[];
+  for(let r=85;r<=100;r++){let d=Math.floor(base*r/100);d=pokeRound(d*stab);d=Math.floor(d*eff);
+    if(o.item==='life')d=pokeRound(d*1.3);rolls.push(eff===0?0:Math.max(1,d));}
+  return{rolls,eff,stab,min:rolls[0],max:rolls[15]};
+}
+function solveSurvival(cfg){
+  const{atk,move,defPoke,weather}=cfg, isPhys=move.cat==='Physical';
+  const atkStat=statOther(isPhys?atk.base[1]:atk.base[3],atk.ev,31,atk.nat);
+  const dHP=defPoke.base[0], dDef=defPoke.base[isPhys?2:4];
+  const dmgMax=(defEV,defNat)=>damageRolls({level:LEVEL,power:move.power,moveType:move.type,
+    atkStat,defStat:statOther(dDef,defEV,31,defNat),atkTypes:atk.types,defTypes:defPoke.types,
+    item:atk.item,weather}).max;
+  const hpAt=ev=>statHP(dHP,ev);
+  const baseHP=hpAt(0);
+  const br=damageRolls({level:LEVEL,power:move.power,moveType:move.type,atkStat,
+    defStat:statOther(dDef,0,31,1),atkTypes:atk.types,defTypes:defPoke.types,item:atk.item,weather});
+  const baseline={...br,hp:baseHP,minPct:br.min/baseHP*100,maxPct:br.max/baseHP*100,ohko:br.min>=baseHP};
+  function search(defNat){let best=null;
+    for(let h=0;h<=252;h+=4){const hp=hpAt(h);
+      for(let d=0;d<=252;d+=4){if(h+d>508)break;
+        if(dmgMax(d,defNat)<hp){const t=h+d;if(!best||t<best.total)best={hpEV:h,defEV:d,total:t,hp};break;}}}
+    return best;}
+  return{baseline,neutral:search(1),boosted:search(1.1),
+    defLabel:isPhys?'防禦':'特防',boostNat:isPhys?'（+防禦，如大膽）':'（+特防，如沉著/慎重）'};
+}
+function solveOutspeed(cfg){
+  const im=cfg.myScarf?1.5:1, fm=cfg.myTailwind?2:1;
+  const eff=(ev,nat)=>Math.floor(statOther(cfg.myBase,ev,31,nat)*im*fm);
+  const forNat=nat=>{for(let ev=0;ev<=252;ev+=4)if(eff(ev,nat)>cfg.targetSpeed)return{ev,speed:eff(ev,nat)};return null;};
+  return{neutral:forNat(1),boosted:forNat(1.1),maxBoost:eff(252,1.1),maxNeutral:eff(252,1),im,fm};
+}
+
+/* ==================== UI 工具 ==================== */
+const $=s=>document.querySelector(s), ce=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+const tyTag=t=>`<span class="ty" style="background:${TYPES[t].color}">${TYPES[t].zh}</span>`;
+const tychips=p=>p.types.map(tyTag).join(' ');
+const tierColor={S:'#c8384a',A:'#c98a10',B:'#4d90d5',Legend:'#8a5cd0'}[undefined];
+const label=k=>{const p=POKEDEX[k];return`${p.zh}・${p.name}`;};
+const KEYS=Object.keys(POKEDEX).sort((a,b)=>{const o={Legend:0,S:1,A:2,B:3};return(o[POKEDEX[a].tier]-o[POKEDEX[b].tier])||POKEDEX[a].name.localeCompare(POKEDEX[b].name);});
+function fillSelect(sel,keys,sel0){sel.innerHTML='';keys.forEach(k=>{const o=ce('option');o.value=k;o.textContent=label(k)+`  (${POKEDEX[k].tier})`;sel.appendChild(o);});if(sel0)sel.value=sel0;}
+
+/* ==================== 分頁切換 ==================== */
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.setAttribute('aria-selected',x===t));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));
+  $('#tab-'+t.dataset.tab).classList.remove('hidden');
+}));
+function goTab(name){document.querySelector(`.tab[data-tab="${name}"]`).click();}
+
+/* 等級 / 佈景 */
+$('#lvlSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  LEVEL=+b.dataset.lvl;[...e.currentTarget.children].forEach(x=>x.setAttribute('aria-pressed',x===b));
+  renderCounter();renderSpeed();renderBulk();});
+$('#themeSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  document.documentElement.setAttribute('data-theme',b.dataset.th);
+  [...e.currentTarget.children].forEach(x=>x.setAttribute('aria-pressed',x===b));});
+
+/* ==================== 主流隊伍 ==================== */
+function renderMeta(){
+  const g=$('#metaGrid');g.innerHTML='';
+  META_TEAMS.forEach(t=>{
+    const card=ce('div','card');
+    const core=t.core.map(k=>{const p=POKEDEX[k];
+      return`<span class="mchip"><span class="dot" style="background:${TYPES[p.types[0]].color}"></span><b>${p.zh}</b><em>${p.role}</em></span>`;}).join('');
+    const threats=t.keyThreats.map(k=>`<span class="tag">${POKEDEX[k].zh}</span>`).join(' ');
+    const cnts=t.counters.map(k=>`<button class="tag" data-cnt="${k}" style="cursor:pointer;color:var(--accent)">${POKEDEX[k].zh} ↗</button>`).join(' ');
+    card.innerHTML=`<h3>${t.name}<span class="usage">使用率 ${t.usage}</span></h3>
+      <div class="mut" style="font-size:11.5px;margin-top:2px">${t.style}</div>
+      <div class="corelist">${core}</div>
+      <div class="plan">${t.plan}</div>
+      <div class="metaline"><span class="k">核心威脅</span>${threats}</div>
+      <div class="metaline"><span class="k">建議天敵</span>${cnts}</div>
+      <div class="note">⚠ ${t.note}</div>`;
+    g.appendChild(card);
+  });
+  g.querySelectorAll('[data-cnt]').forEach(b=>b.addEventListener('click',()=>{
+    $('#cThreat').value=b.dataset.cnt;$('#cTeam').value='';renderCounter();goTab('counter');}));
+  $('#metaDisc').innerHTML=`ℹ️ 使用率與骨架為<b>策展資料</b>，方便你依實際天梯調整。Champions 正式環境數據公開後，
+    直接編輯原始碼中的 <code>META_TEAMS</code> 即可更新，計算引擎不受影響。`;
+}
+
+/* ==================== 應對搭配 ==================== */
+function analyzeCounters(threatKeys){
+  // threatKeys: 一或多個威脅；聚合其 STAB 屬性
+  const threats=threatKeys.map(k=>POKEDEX[k]);
+  const scored=KEYS.filter(k=>!threatKeys.includes(k)).map(k=>{
+    const me=POKEDEX[k];
+    let worstIn=0, bestOut=0, spdWins=0;
+    threats.forEach(th=>{
+      // 對方用其屬性 STAB 打我，取最大倍率（最糟情況）
+      let w=Math.max(...th.types.map(tt=>typeMult(tt,me.types)));
+      worstIn=Math.max(worstIn,w);
+      // 我用我的屬性打對方，取最好倍率
+      let o=Math.max(...me.types.map(mt=>typeMult(mt,th.types)));
+      bestOut=Math.max(bestOut,o);
+      if(statOther(me.base[5],252,31,1.1)>statOther(th.base[5],252,31,1))spdWins++;
+    });
+    const score=bestOut*2-worstIn*2.2+(me.base[0]+me.base[2]+me.base[4])/400;
+    return{k,me,worstIn,bestOut,spdWins,score};
+  }).filter(x=>x.bestOut>=1&&x.worstIn<=1)
+    .sort((a,b)=>b.score-a.score).slice(0,6);
+  return scored;
+}
+function renderCounter(){
+  const out=$('#counterOut');
+  const teamSel=$('#cTeam').value, threatSel=$('#cThreat').value;
+  let threatKeys, title;
+  if(teamSel){const t=META_TEAMS.find(x=>x.id===teamSel);threatKeys=t.keyThreats;
+    title=`對抗「${t.name}」核心威脅（${threatKeys.map(k=>POKEDEX[k].zh).join('、')}）`;}
+  else{threatKeys=[threatSel];title=`對抗 ${label(threatSel)}`;}
+  const list=analyzeCounters(threatKeys);
+  let html=`<div class="result"><div class="big">${title}</div>`;
+  // 威脅速度提示
+  threatKeys.forEach(k=>{const p=POKEDEX[k];
+    const smax=statOther(p.base[5],252,31,1.1), s0=statOther(p.base[5],0,31,1);
+    html+=`<div class="mut" style="margin:4px 0">${p.zh} ${tychips(p)} · 速度 ${p.base[5]} 種族（滿速+ ≈ <b class="tnum">${smax}</b>，實速線 ${s0}–${smax}）</div>`;});
+  if(!list.length){html+=`<div class="callout warn">圖鑑中找不到同時抵抗其主打又能打中弱點的乾淨應對，建議改用<b>耐久牆＋消耗</b>或<b>先制／異常</b>處理，並到「存活配點」確認能擋下其主力招。</div>`;}
+  else{html+=`<div style="margin-top:12px">`;
+    list.forEach((x,i)=>{
+      const resTxt=x.worstIn===0?'完全免疫其主打':x.worstIn<=0.25?'四倍抵抗其主打':x.worstIn<=0.5?'抵抗其主打 ×0.5':'不吃額外弱點';
+      const hitTxt=x.bestOut>=4?'四倍打擊弱點 ×4':x.bestOut>=2?'打擊弱點 ×2':'可造成一般傷害';
+      const spd=x.spdWins===threatKeys.length?'滿速可超車':(x.spdWins>0?'部分超車':'速度較慢·需順風/房間');
+      html+=`<div class="cnt"><div class="rank">${i+1}</div>
+        <div class="who"><b>${x.me.zh}</b><br>${tychips(x.me)}</div>
+        <div class="badges">
+          <span class="badge res">🛡 ${resTxt}</span>
+          <span class="badge hit">⚔ ${hitTxt}</span>
+          <span class="badge spd">⚡ ${spd}</span>
+        </div></div>`;
+    });
+    html+=`</div><div class="mut" style="margin-top:10px">排序依「打擊弱點 × 抵抗其主打 × 耐久」綜合分。要確認能不能實際擋下一擊，請到
+      <a href="#" onclick="prefBulk('${threatKeys[0]}');return false;" style="color:var(--accent);font-weight:700">存活配點 ↗</a> 帶入。</div>`;
+  }
+  html+=`</div>`;
+  out.innerHTML=html;
+}
+function prefBulk(threatKey){
+  $('#bAtk').value=threatKey;syncMoveForAtk();renderBulk();goTab('bulk');
+}
+
+/* ==================== 速度超車 ==================== */
+function targetSpeedValue(){
+  const mode=$('#sTargetMode').value;
+  if(mode==='num')return{spd:+$('#sTargetNum').value||0,label:`速度 ${$('#sTargetNum').value}`};
+  const p=POKEDEX[$('#sTarget').value], mode2=$('#sTargetNat').value;
+  let spd,desc;
+  if(mode2==='max+'){spd=statOther(p.base[5],252,31,1.1);desc='滿速+性格';}
+  else if(mode2==='max0'){spd=statOther(p.base[5],252,31,1);desc='滿速中性';}
+  else{spd=statOther(p.base[5],0,31,1);desc='無投資';}
+  return{spd,label:`${p.zh}（${desc} ${spd}）`};
+}
+function renderSpeed(){
+  const me=POKEDEX[$('#sMine').value];
+  const tv=targetSpeedValue();
+  const r=solveOutspeed({myBase:me.base[5],targetSpeed:tv.spd,
+    myScarf:$('#sScarf').checked,myTailwind:$('#sTail').checked});
+  const mods=[];if(r.im>1)mods.push('命運頭巾 ×1.5');if(r.fm>1)mods.push('順風 ×2');
+  const modTxt=mods.length?`（已套用：${mods.join('、')}）`:'';
+  let html=`<div class="result"><div class="big">${me.zh} 要超車 ${tv.label}</div>
+    <div class="mut">${me.zh} 速度種族值 ${me.base[5]} ${modTxt}</div>`;
+  const pick=r.neutral||r.boosted;
+  if(!r.neutral&&!r.boosted){
+    html+=`<div class="callout crit"><span class="lbl">追不上</span><br>
+      即使滿速＋加速性格（${r.maxBoost}）仍慢於目標（${tv.spd}）。需要靠<b>命運頭巾</b>、<b>順風</b>或
+      <b>房間反速</b>，或改用先制招。</div>`;
+  }else{
+    if(r.neutral){
+      html+=`<div class="callout good"><span class="lbl">最省配點方案（中性性格）</span><br>
+        速度努力值 <span class="spread">${r.neutral.ev}</span> → 實速 <b class="tnum">${r.neutral.speed}</b>，
+        剛好超過 ${tv.spd}。<div class="mut">性格不需犧牲攻防，剩餘 ${252-r.neutral.ev}+ 點可投耐久。</div></div>`;
+    }
+    if(r.boosted&&(!r.neutral||r.boosted.ev<r.neutral.ev)){
+      html+=`<div class="callout"><span class="lbl">加速性格方案（+速度，如爽朗/膽小）</span><br>
+        只需 <span class="spread">${r.boosted.ev}</span> 速度努力值 → 實速 <b class="tnum">${r.boosted.speed}</b>。
+        <div class="mut">用性格換取更多剩餘努力值投入耐久或攻擊。</div></div>`;
+    }
+    html+=`<div class="callout warn" style="font-size:12.5px"><span class="lbl">保險建議</span><br>
+      對手可能也在拉速度或帶頭巾。想穩，建議<b>比計算值再多 4–8 點</b>抓「速度戰爭」，或直接滿速
+      （${r.maxNeutral}／+性格 ${r.maxBoost}）。</div>`;
+  }
+  html+=`</div>`;
+  $('#speedOut').innerHTML=html;
+}
+
+/* ==================== 存活配點 ==================== */
+function syncMoveForAtk(){
+  // 依攻擊方屬性優先挑一個 STAB 招，方便使用
+  const atk=POKEDEX[$('#bAtk').value];
+  const cur=MOVES[$('#bMove').value];
+  if(cur&&atk.types.includes(cur.type))return;
+  const stabKey=Object.keys(MOVES).find(m=>atk.types.includes(MOVES[m].type));
+  if(stabKey)$('#bMove').value=stabKey;
+}
+function renderBulk(){
+  const atk=POKEDEX[$('#bAtk').value], def=POKEDEX[$('#bDef').value], mv=MOVES[$('#bMove').value];
+  const [ev,nat]=$('#bAtkInv').value.split(',').map(Number);
+  const res=solveSurvival({atk:{...atk,ev,nat,item:$('#bItem').value},
+    move:mv,defPoke:def,weather:$('#bWeather').value});
+  $('#bDefInfo').innerHTML=`${def.zh} ${tychips(def)} · 種族 HP ${def.base[0]} / 防 ${def.base[2]} / 特防 ${def.base[4]}`;
+  const b=res.baseline;
+  const effTxt=b.eff===0?'（此招對其無效）':b.eff>=2?`效果絕佳 ×${b.eff}`:b.eff<=0.5&&b.eff>0?`效果不好 ×${b.eff}`:`一般 ×${b.eff}`;
+  let html=`<div class="result"><div class="big">${atk.zh} 的「${mv.zh}」打 ${def.zh}</div>
+    <div class="mut">${effTxt}${$('#bWeather').value!=='none'?' · 天候已計入':''}</div>`;
+  if(b.eff===0){html+=`<div class="callout good"><span class="lbl">免疫</span><br>此招對 ${def.zh} 無效，無須投資即可完全無傷擋下。</div></div>`;$('#bulkOut').innerHTML=html;return;}
+  // baseline bar
+  const pct=Math.min(100,b.maxPct);const col=b.ohko?'var(--crit)':b.maxPct>=100?'var(--warn)':'var(--good)';
+  html+=`<div class="callout ${b.ohko?'crit':b.maxPct>=100?'warn':'good'}">
+    <span class="lbl">無耐久投資時（0 HP / 0 ${res.defLabel}）</span><br>
+    傷害 <b class="tnum">${b.min}–${b.max}</b> / ${b.hp} HP　(<b class="tnum">${b.minPct.toFixed(1)}–${b.maxPct.toFixed(1)}%</b>)
+    <div class="bar"><i style="width:${pct}%;background:${col}"></i></div>
+    ${b.ohko?'❌ <b>穩定一擊必殺（保證被一招帶走）</b>':b.maxPct>=100?'⚠ <b>有機率被一擊</b>（最大亂數會 KO）':'✅ 裸裝即可穩定擋下一擊'}</div>`;
+  // recommended spreads
+  if(b.maxPct<100){
+    html+=`<div class="callout"><span class="lbl">結論</span><br>${def.zh} 不需額外投資就能穩擋這招——把努力值留給速度或輸出即可。</div>`;
+  }else{
+    const n=res.neutral, bo=res.boosted;
+    if(n){html+=`<div class="callout good"><span class="lbl">避免被一招帶走 — 最省配點（無防禦性格）</span><br>
+      <span class="spread">HP ${n.hpEV} / ${res.defLabel} ${n.defEV}</span>　共 ${n.total} 點
+      <div class="mut">此配點下 HP=${n.hp}，可保證擋下最大亂數。</div></div>`;
+      if(bo&&bo.total<n.total){html+=`<div class="callout"><span class="lbl">改帶防禦性格更省 ${res.boostNat}</span><br>
+        <span class="spread">HP ${bo.hpEV} / ${res.defLabel} ${bo.defEV}</span>　共 ${bo.total} 點</div>`;}
+    }else if(bo){html+=`<div class="callout good"><span class="lbl">避免被一招帶走 — 需搭防禦性格 ${res.boostNat}</span><br>
+      <span class="spread">HP ${bo.hpEV} / ${res.defLabel} ${bo.defEV}</span>　共 ${bo.total} 點
+      <div class="mut">中性性格再滿點也擋不住，須靠 +防禦性格才保證存活；此配點下 HP=${bo.hp}。</div></div>`;
+    }else{html+=`<div class="callout crit"><span class="lbl">擋不住</span><br>
+      即使 252 HP / 252 ${res.defLabel} 也會被最大亂數帶走。請改用<b>抵抗屬性的隊員</b>、
+      <b>威嚇／幫手</b>降傷，或用<b>異相種／半血</b>類手段。</div>`;}
+    html+=`<div class="mut" style="margin-top:8px">＊以「保證擋下最大亂數」為標準（最嚴格）。若只需擋住多數亂數可再省一點。
+      未計入威嚇、光牆／反射壁、百分比減傷道具等額外效果。</div>`;
+  }
+  html+=`</div>`;
+  $('#bulkOut').innerHTML=html;
+}
+
+/* ==================== 初始化 ==================== */
+function init(){
+  renderMeta();
+  // counter
+  fillSelect($('#cThreat'),KEYS,'chienpao');
+  const ct=$('#cTeam');ct.innerHTML='<option value="">— 不使用 —</option>';
+  META_TEAMS.forEach(t=>{const o=ce('option');o.value=t.id;o.textContent=t.name;ct.appendChild(o);});
+  $('#cThreat').addEventListener('change',()=>{$('#cTeam').value='';renderCounter();});
+  ct.addEventListener('change',renderCounter);
+  renderCounter();
+  // speed
+  fillSelect($('#sMine'),KEYS,'ironhands');
+  fillSelect($('#sTarget'),KEYS,'chienpao');
+  ['sMine','sTarget','sTargetNat','sTargetNum'].forEach(id=>$('#'+id).addEventListener('change',renderSpeed));
+  ['sScarf','sTail'].forEach(id=>$('#'+id).addEventListener('change',renderSpeed));
+  $('#sTargetMode').addEventListener('change',()=>{
+    const num=$('#sTargetMode').value==='num';
+    $('#sTargetPokeWrap').classList.toggle('hidden',num);
+    $('#sTargetNatWrap').classList.toggle('hidden',num);
+    $('#sTargetNumWrap').classList.toggle('hidden',!num);renderSpeed();});
+  renderSpeed();
+  // bulk
+  fillSelect($('#bAtk'),KEYS,'chienpao');
+  fillSelect($('#bDef'),KEYS,'incineroar');
+  const bm=$('#bMove');bm.innerHTML='';
+  Object.keys(MOVES).forEach(m=>{const o=ce('option');o.value=m;
+    o.textContent=`${MOVES[m].zh}（${TYPES[MOVES[m].type].zh}/${MOVES[m].cat==='Physical'?'物':'特'} ${MOVES[m].power}）`;bm.appendChild(o);});
+  syncMoveForAtk();
+  $('#bAtk').addEventListener('change',()=>{syncMoveForAtk();renderBulk();});
+  ['bMove','bAtkInv','bItem','bWeather','bDef'].forEach(id=>$('#'+id).addEventListener('change',renderBulk));
+  renderBulk();
+}
+init();
+</script>
