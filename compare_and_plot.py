@@ -114,8 +114,19 @@ def main():
     model_path = os.path.join(SCRIPT_DIR, "mappo_vec.pt")
     has_model = os.path.exists(model_path)
     if has_model:
-        algo.load(model_path)
-        print(f"已載入訓練模型 {model_path}\n")
+        try:
+            algo.load(model_path)
+            print(f"已載入訓練模型 {model_path}\n")
+        except RuntimeError as e:
+            # 維度不符最常見原因：模型在 SUMO(8 RSU)訓練，卻在 mock(2 RSU)載入，
+            # 或反之。全域狀態維度 = RSU 數 + 5。
+            has_model = False
+            other = "--sumo" if not use_sumo else "去掉 --sumo(改用 mock)"
+            print(f"⚠ 模型維度與當前環境不符(current state_dim={env0.state_dim})。\n"
+                  f"   模型是在另一種場景(不同 RSU 數)訓練的。\n"
+                  f"   → 請以 {other} 執行本腳本，或重新 train_mappo 對齊當前場景。\n"
+                  f"   (原始錯誤：{str(e).splitlines()[0]})\n"
+                  f"   本次略過 MAPPO，僅評估固定/貪婪/隨機基準。\n")
     else:
         print("⚠ 找不到 mappo_vec.pt，MAPPO 將用未訓練權重(請先跑 train_mappo.py)\n")
     env0.close()
