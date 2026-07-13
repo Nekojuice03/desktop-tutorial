@@ -32,8 +32,11 @@ from PIL import Image
 from vec_env_ma import VECMultiEnv, MA_ACTIONS, SCRIPT_DIR
 from infra_config import RSU_RANGE_M
 
-KIND_COLOR = {"v2v_strong": "#1565c0", "v2v_near": "#64b5f6",
-              "rsu": "#ef6c00", "cloud": "#c62828"}
+# 決策連線配色：刻意避開車輛(藍/橘星)與 RSU(深藍)的顏色，確保 V2V 也清楚可見
+KIND_COLOR = {"v2v_strong": "#2e7d32", "v2v_near": "#00acc1",
+              "rsu": "#8e24aa", "cloud": "#c62828"}
+KIND_LABEL = {"v2v_strong": "→ V2V-strong", "v2v_near": "→ V2V-near",
+              "rsu": "→ RSU", "cloud": "→ Cloud"}
 
 
 def record_episode(env, algo, ticks_limit):
@@ -118,10 +121,15 @@ def draw_frame(ax, fr, env, net_shapes, tau, bounds=None):
             ax.plot([fr["veh"][h][0], fr["veh"][e][0]],
                     [fr["veh"][h][1], fr["veh"][e][1]],
                     ls="--", lw=0.8, color="#7e57c2", zorder=3)
-    # 本 tick 的卸載決策連線
+    # 本 tick 的卸載決策連線(高對比色 + 終點 X 標記；每種只掛一次圖例)
+    seen = set()
     for hp, tp, kind in fr["decisions"]:
-        ax.plot([hp[0], tp[0]], [hp[1], tp[1]], lw=1.8,
-                color=KIND_COLOR[kind], alpha=0.9, zorder=6)
+        lbl = KIND_LABEL[kind] if kind not in seen else None
+        seen.add(kind)
+        ax.plot([hp[0], tp[0]], [hp[1], tp[1]], lw=2.6, color=KIND_COLOR[kind],
+                alpha=0.95, zorder=7, label=lbl, solid_capstyle="round")
+        ax.scatter(tp[0], tp[1], s=34, color=KIND_COLOR[kind],
+                   marker="X", edgecolor="white", linewidths=0.5, zorder=8)
     ax.set_title("Digital-Twin View — offloading decisions in real time")
     ax.text(0.01, 0.01, fr["hud"], transform=ax.transAxes, fontsize=9,
             family="monospace", va="bottom",
@@ -209,6 +217,12 @@ def main():
           f"{args.ticks} ticks)...")
     frames = record_episode(env, algo, args.ticks)
     env2 = env   # draw 需要 rsus/rsu_ids
+    from collections import Counter
+    tally = Counter(k for fr in frames for _, _, k in fr["decisions"])
+    print(f"決策連線統計(所有 frame){dict(tally)}")
+    if not any(k.startswith("v2v") for k in tally):
+        print("  ⚠ 本回合沒有任何 V2V 決策——多為策略在此情境選了 RSU/雲，"
+              "或範圍內無強車/鄰車(非繪圖問題)。可換 --tau/種子或延長 --ticks。")
     print(f"共 {len(frames)} 個 frame，渲染 GIF...")
 
     fig, ax = plt.subplots(figsize=(8, 7))
