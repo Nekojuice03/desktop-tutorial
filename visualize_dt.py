@@ -50,7 +50,8 @@ def record_episode(env, algo, ticks_limit):
                 break
             continue
         # 決策(有模型用模型，否則 greedy)
-        actions = algo.act_greedy(obs) if algo else env.greedy_actions()
+        actions = (algo.act_greedy(obs, env.current_action_masks())
+                   if algo else env.greedy_actions())
         # 決策連線：持有車 → 目標
         decisions = []
         for (sid, ctx), a in zip(env._active, actions):
@@ -155,6 +156,8 @@ def main():
     p.add_argument("--tau", type=int, default=2, help="孿生同步延遲(秒)，畫殘影用")
     p.add_argument("--ticks", type=int, default=120)
     p.add_argument("--fps", type=int, default=8)
+    p.add_argument("--priority", action="store_true")
+    p.add_argument("--twin-quality", action="store_true")
     args = p.parse_args()
 
     if args.sumo:
@@ -162,10 +165,15 @@ def main():
     else:
         cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                    episode_ticks=args.ticks + 5, task_cpu_scale=1.0)
+    if args.priority:
+        cfg["priority_aware"] = True
+    if args.twin_quality:
+        cfg["twin_quality_aware"] = True
     env = VECMultiEnv(**cfg, obs_delay=args.tau)
 
     algo = None
-    mp = os.path.join(SCRIPT_DIR, "mappo_vec.pt")
+    artifact_suffix = ("_prio" if args.priority else "") + ("_tq" if args.twin_quality else "")
+    mp = os.path.join(SCRIPT_DIR, f"mappo{artifact_suffix}_vec.pt")
     if os.path.exists(mp):
         from mappo import MAPPO
         algo = MAPPO(obs_dim=env.n_features, state_dim=env.state_dim,

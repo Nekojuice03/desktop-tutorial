@@ -48,7 +48,7 @@ def run_at_rate(env, mode, algo, episodes, seed0=3000):
             if mode == "greedy":
                 actions = env.greedy_actions()
             else:
-                actions = algo.act_greedy(obs)
+                actions = algo.act_greedy(obs, env.current_action_masks())
             _, obs, state, done, info = env.step(actions)
             if done:
                 break
@@ -68,15 +68,22 @@ def run_at_rate(env, mode, algo, episodes, seed0=3000):
 
 def main():
     use_sumo = "--sumo" in sys.argv
+    priority = "--priority" in sys.argv
+    twin_quality = "--twin-quality" in sys.argv
     if use_sumo:
         base = dict(mock=False, episode_ticks=300, task_cpu_scale=1.0)
     else:
         base = dict(mock=True, mock_vehicles=24, server_ratio=0.45,
                     episode_ticks=300, task_cpu_scale=1.0)
+    if priority:
+        base["priority_aware"] = True
+    if twin_quality:
+        base["twin_quality_aware"] = True
+    artifact_suffix = ("_prio" if priority else "") + ("_tq" if twin_quality else "")
 
     mode = "greedy"
     algo = None
-    mp = os.path.join(SCRIPT_DIR, "mappo_vec.pt")
+    mp = os.path.join(SCRIPT_DIR, f"mappo{artifact_suffix}_vec.pt")
     if os.path.exists(mp):
         from mappo import MAPPO
         probe = VECMultiEnv(**base, arrival_rate=0.3)

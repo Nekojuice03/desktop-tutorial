@@ -18,6 +18,7 @@ import os
 import math
 import numpy as np
 
+from digital_twin import DigitalTwinStateStore
 from kalman_tracker import EKFCTRV, predict_contact, predict_contact_static
 
 from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
@@ -40,6 +41,7 @@ from vec_env import (MockWorld, TraciWorld, _clip01,
 MA_ACTIONS = ["local", "v2v_strong", "v2v_near", "rsu", "cloud"]
 MA_N_FEATURES = 18   # +1：回程(backhaul)佇列等待 —— agent 須看得到雲端壅塞
 MAX_AGENTS_NORM = 20.0
+TWIN_AGE_NORM = 8.0
 
 
 class VECMultiEnv:
@@ -48,7 +50,8 @@ class VECMultiEnv:
                  episode_ticks=200, rsus=None, mock_vehicles=24,
                  task_cpu_scale=1.0, task_deadline_scale=1.0,
                  predictor="kalman", recovery="v2i", obs_delay=0,
-                 arrival_delivery=False, priority_aware=False):
+                 arrival_delivery=False, priority_aware=False,
+                 twin_quality_aware=False):
         """
         predictor：V2V 連線壽命預判器(消融階梯：naive → 可部署 → oracle)
           "linear" = 等速直線外推(baseline，路口轉彎會高估)
@@ -85,6 +88,7 @@ class VECMultiEnv:
         self.obs_delay = int(obs_delay)
         self.arrival_delivery = arrival_delivery
         self.priority_aware = priority_aware
+        self.twin_quality_aware = twin_quality_aware
         self.gui = gui
         self.cfg = cfg
         self.arrival_rate = arrival_rate
@@ -105,11 +109,12 @@ class VECMultiEnv:
             self.rsus = {rid: {"x": v["x"], "y": v["y"]}
                          for rid, v in load_rsus().items()}
 
-        self.n_features = MA_N_FEATURES + (1 if priority_aware else 0)
+        self.n_features = (MA_N_FEATURES + (1 if priority_aware else 0)
+                           + (2 if twin_quality_aware else 0))
         self.n_actions = len(MA_ACTIONS)
         self.rsu_ids = sorted(self.rsus.keys())
         # 全域狀態：各基站負載 + 回程壅塞 + 活躍數 + 平均本地負載 + 車數 + 強車數
-        self.state_dim = len(self.rsu_ids) + 5
+        self.state_dim = len(self.rsu_ids) + 5 + (2 if twin_quality_aware else 0)
 
         self.world = None
         self._ep = 0
@@ -182,21 +187,33 @@ class VECMultiEnv:
 
     # ---------- 單一任務情境 ----------
     def _build_context(self, task, holder_id, holder_pos, now, hop, hop_energy=0.0):
-        # 最近基站
-        near_rsu = rsus_in_range(holder_pos, self.rsus, RSU_RANGE_M)
+        """Build the decision context exclusively from the twin snapshot.
+
+        ``holder_pos`` is physical truth and is retained only for later
+        execution/settlement diagnostics.  Every feature exposed to the policy
+        is derived from ``twin_states`` so an observation-delay experiment
+        cannot leak the current SUMO position.
+        """
+        holder_twin = self.twin_states.get(holder_id)
+        if holder_twin is None:
+            return None
+        decision_pos = holder_twin["pos"]
+        # 最近基站（孿生視角）
+        near_rsu = rsus_in_range(decision_pos, self.rsus, RSU_RANGE_M)
         rsu_id = near_rsu[0] if near_rsu else None
         rsu_pos = (self.rsus[rsu_id]["x"], self.rsus[rsu_id]["y"]) if rsu_id else None
-        # 範圍內的其他 server(依距離排序)
-        others = {sid: self.veh_states[sid]["pos"] for sid in self.servers
-                  if sid != holder_id and sid in self.veh_states}
-        nbrs = neighbors_in_range(holder_pos, others, V2V_RANGE_M)
+        # 範圍內的其他 server(依距離排序；只可見孿生快照中的車)
+        others = {sid: state["pos"] for sid, state in self.twin_states.items()
+                  if sid != holder_id and self.roles.get(sid) == "server"}
+        nbrs = neighbors_in_range(decision_pos, others, V2V_RANGE_M)
         near_id = nbrs[0] if nbrs else None
-        near_pos = self.veh_states[near_id]["pos"] if near_id else None
+        near_pos = self.twin_states[near_id]["pos"] if near_id else None
         # 範圍內最近的『強車』
         strong_nbrs = [s for s in nbrs if s in self.strong]
         strong_id = strong_nbrs[0] if strong_nbrs else None
-        strong_pos = self.veh_states[strong_id]["pos"] if strong_id else None
-        return {"task": task, "holder_id": holder_id, "holder_pos": holder_pos,
+        strong_pos = self.twin_states[strong_id]["pos"] if strong_id else None
+        return {"task": task, "holder_id": holder_id, "holder_pos": decision_pos,
+                "holder_phys_pos": holder_pos,
                 "now": now, "hop": hop, "hop_energy": hop_energy,
                 "holder_strong": holder_id in self.strong,
                 "rsu_id": rsu_id, "rsu_pos": rsu_pos,
@@ -231,6 +248,14 @@ class VECMultiEnv:
         else:
             nr_in, nr_dist, nr_strong, nr_contact = 0.0, V2V_RANGE_M, 0.0, 0.0
 
+        extra = []
+        if self.priority_aware:
+            extra.append(_clip01(task.priority / 2.5))
+        if self.twin_quality_aware:
+            extra.extend([
+                _clip01(self.twin_age_s / TWIN_AGE_NORM),
+                _clip01(self.twin_store.position_uncertainty_m() / V2V_RANGE_M),
+            ])
         return np.array([
             _clip01(task.data_bits / DATA_NORM),
             _clip01(task.cpu_cycles / CPU_NORM),
@@ -250,7 +275,7 @@ class VECMultiEnv:
             nr_strong,                                # 最近鄰車本身是不是強車
             _clip01(nr_contact / CONTACT_NORM),
             _clip01(self.nodes.wait_time("backhaul", now) / WAIT_NORM),  # 回程壅塞
-        ] + ([_clip01(task.priority / 2.5)] if self.priority_aware else []),
+        ] + extra,
             dtype=np.float32)
 
     def _global_state(self, now, n_active):
@@ -264,6 +289,11 @@ class VECMultiEnv:
         parts.append(_clip01(len(self.veh_states) / 50.0))
         n_strong = sum(1 for v in self.veh_states if v in self.strong)
         parts.append(_clip01(n_strong / 10.0))   # 場上強車數(稀缺資源)
+        if self.twin_quality_aware:
+            parts.extend([
+                _clip01(self.twin_age_s / TWIN_AGE_NORM),
+                _clip01(self.twin_store.position_uncertainty_m() / V2V_RANGE_M),
+            ])
         return np.array(parts, dtype=np.float32)
 
     # ---------- 推進世界一個 tick、指派任務 ----------
@@ -274,8 +304,13 @@ class VECMultiEnv:
         # ★孿生視角：DT 收到的 BSM 比物理世界舊 obs_delay 秒。
         #   決策側(預判/contact 特徵/KF 量測)一律讀 twin_states；
         #   物理側(任務指派距離、結算真實位置、優雅退場)讀 veh_states。
-        self._hist.append(veh_states)
-        self.twin_states = self._hist[0]   # deque(maxlen=τ+1) 最舊者=τ 秒前
+        snapshot = self.twin_store.update(now, veh_states)
+        self.twin_states = snapshot.states
+        self.twin_observed_at = snapshot.observed_at
+        self.twin_age_s = snapshot.age_s
+        self.stats["twin_age_sum"] += self.twin_age_s
+        self.stats["twin_age_n"] += 1
+        self.stats["twin_age_max"] = max(self.stats["twin_age_max"], self.twin_age_s)
         # 記住每台車最後出現的位置：車輛抵達終點會從模擬消失(despawn)，
         # 結算時若執行車已離場，用它離場前的位置做「優雅退場交接」(見 _settle_one)
         for vid, s in veh_states.items():
@@ -327,9 +362,15 @@ class VECMultiEnv:
                     continue
                 # 指派跳(client→server)：補上 PC5 存取開銷與傳輸能耗(先前漏算)
                 hop = V2V_EXTRA_LATENCY + hop_tx
-                assign[sid] = self._build_context(task, sid, self.servers[sid],
-                                                  now + hop, hop,
-                                                  hop_energy=TX_POWER_W * hop_tx)
+                ctx = self._build_context(task, sid, self.servers[sid],
+                                          now + hop, hop,
+                                          hop_energy=TX_POWER_W * hop_tx)
+                # 新進車尚未出現在延遲孿生快照時，決策器沒有合法觀測；
+                # 以本地 fallback 處理，避免偷讀當前物理狀態。
+                if ctx is None:
+                    self._fallback_local(task, cpos, now)
+                else:
+                    assign[sid] = ctx
             else:
                 self._fallback_local(task, cpos, now)
         return now, assign
@@ -342,18 +383,8 @@ class VECMultiEnv:
         self.stats["fallback"] += 1
         if r["feasible"]:
             total = r["latency"]
-            self.stats["latency_sum"] += total
-            self.stats["latency_n"] += 1
-            self.stats["energy_sum"] += r["energy"]
-            self.stats["energy_n"] += 1
-            self.stats["cost_sum"] += r["cost"]   # 本地 fallback：成本為 0
-            if total <= task.deadline_s:
-                self.stats["success"] += 1
-                self._record_kind(task.kind, True)
-            else:
-                self.stats["fail"] += 1
-                self.stats["deadline_miss"] += 1
-                self._record_kind(task.kind, False)
+            self._finalize(total, r["energy"], r["cost"], task,
+                           ok=(total <= task.deadline_s))
 
     def _advance_to_active(self):
         guard = 0
@@ -395,6 +426,7 @@ class VECMultiEnv:
             self.stats["infeasible"] += 1
             self._record_kind(task.kind, False)
             self.stats["wsum"] += task.priority
+            self.stats["weighted_n"] += 1
             return -w * PENALTY_FAIL
 
         # V2V 兩種動作在成本模型裡都是 "v2v"
@@ -413,6 +445,7 @@ class VECMultiEnv:
                 self.stats["infeasible"] += 1
             self._record_kind(task.kind, False)
             self.stats["wsum"] += task.priority
+            self.stats["weighted_n"] += 1
             return -w * PENALTY_FAIL
 
         total = ctx["hop"] + r["latency"]
@@ -447,6 +480,7 @@ class VECMultiEnv:
     def _finalize(self, total, energy, cost, task, ok):
         """把一筆任務的最終結果記進統計(成功/超時、延遲/能耗/成本、任務類型、加權成功)。"""
         self.stats["wsum"] += task.priority
+        self.stats["weighted_n"] += 1
         if ok:
             self.stats["wsucc"] += task.priority
         self.stats["latency_sum"] += total
@@ -492,6 +526,8 @@ class VECMultiEnv:
 
     def _fail_tail(self, f):
         """不可恢復失敗的共同尾段：計數 + 統計 + 獎勵差額。"""
+        self.stats["wsum"] += f["task"].priority
+        self.stats["weighted_n"] += 1
         self.stats["break_failed"] += 1
         self.stats["fail"] += 1
         self._record_kind(f["task"].kind, False)
@@ -631,6 +667,36 @@ class VECMultiEnv:
         self._fail_tail(f)
 
     # ---------- 介面 ----------
+    @staticmethod
+    def _action_mask_for(ctx):
+        """Mask only structurally impossible actions in the twin view.
+
+        Predicted contact-time risk is intentionally *not* masked: admission
+        control and the policy must still learn whether a visible candidate is
+        safe enough for the task.  Local execution is always available.
+        """
+        has_rsu = ctx["rsu_id"] is not None
+        return np.array([
+            True,
+            ctx["strong_id"] is not None,
+            ctx["near_id"] is not None,
+            has_rsu,
+            has_rsu,
+        ], dtype=np.bool_)
+
+    def current_action_masks(self):
+        """Return one boolean action mask per currently active agent."""
+        if not self._active:
+            return np.zeros((0, self.n_actions), dtype=np.bool_)
+        return np.stack([self._action_mask_for(ctx) for _, ctx in self._active])
+
+    def sample_valid_actions(self, rng):
+        """Uniform random baseline over actions visible in the twin state."""
+        masks = self.current_action_masks()
+        return np.array([
+            int(rng.choice(np.flatnonzero(mask))) for mask in masks
+        ], dtype=np.int64)
+
     def greedy_actions(self):
         """
         就近最快啟發式基準：每個 agent 選『預估總延遲最低』的可行動作。
@@ -677,8 +743,11 @@ class VECMultiEnv:
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
                       "cost_sum": 0.0, "by_target": {},
+                      "twin_age_sum": 0.0, "twin_age_n": 0,
+                      "twin_age_max": 0.0,
                       "kind_total": {}, "kind_success": {},   # 各任務類型成功率
-                      "wsum": 0.0, "wsucc": 0.0}               # 優先權加權成功率
+                      "wsum": 0.0, "wsucc": 0.0,
+                      "weighted_n": 0}                           # 每筆結果恰入帳一次
 
     def _record_kind(self, kind, ok):
         """記錄某任務類型的成敗（給 vision-only 等分類型成功率用）。"""
@@ -707,9 +776,13 @@ class VECMultiEnv:
         self._settle_delta = 0.0  # 結算 vs 預測獎勵的差額(補進下一步團隊獎勵)
         self._last_seen = {}      # vid -> 最後出現位置(離場車的優雅退場交接用)
         self._trackers = {}       # vid -> EKF-CTRV 追蹤器(predictor="kalman")
-        from collections import deque
-        self._hist = deque(maxlen=self.obs_delay + 1)   # 孿生延遲 τ 的狀態緩衝
+        self.twin_store = DigitalTwinStateStore(
+            delay_ticks=self.obs_delay,
+            dt=getattr(self.world, "dt", 1.0),
+        )
         self.twin_states = {}
+        self.twin_observed_at = 0.0
+        self.twin_age_s = 0.0
         self._ep += 1
         self._reset_stats()
 
@@ -730,22 +803,25 @@ class VECMultiEnv:
             i, (sid, ctx) = items[k]
             rewards[i] = self._resolve_one(ctx, int(actions[i]))
 
-        # 把「上一輪推進期間」結算出的 V2V 差額(斷線懲罰/遷移代價)攤進本步團隊獎勵。
-        # 延後一步是刻意的：GAE 會把信用沿 tick 序列往回傳給當初的決策。
-        if self._settle_delta and len(rewards):
-            rewards = rewards + np.float32(self._settle_delta / len(rewards))
-            self._settle_delta = 0.0
-
         ok = self._advance_to_active()
         done = not ok
+        # `_advance_to_active` advances physical time and settles completions
+        # caused by the actions above.  Apply the correction *after* advancing,
+        # including the forced terminal settlement.  The old ordering deferred
+        # this value to a later call and silently dropped terminal corrections.
+        settlement_delta = float(self._settle_delta)
+        if settlement_delta and len(rewards):
+            rewards = rewards + np.float32(settlement_delta / len(rewards))
+        self._settle_delta = 0.0
         if done:
             next_obs = np.zeros((0, self.n_features), np.float32)
             next_state = np.zeros(self.state_dim, np.float32)
-            info = {"episode_stats": self.episode_summary()}
+            info = {"episode_stats": self.episode_summary(),
+                    "settlement_delta": settlement_delta}
         else:
             next_obs = np.stack([self._obs_of(c) for _, c in self._active])
             next_state = self._global_state(self.now, len(self._active))
-            info = {}
+            info = {"settlement_delta": settlement_delta}
         return rewards, next_obs, next_state, done, info
 
     def episode_summary(self):
@@ -757,6 +833,7 @@ class VECMultiEnv:
                 "success_rate": (s["success"] / done) if done else 0.0,
                 "vision_success_rate": kind_sr.get("vision", 0.0),  # 重任務成功率(動態範圍大)
                 "weighted_success_rate": (s["wsucc"] / s["wsum"]) if s["wsum"] else 0.0,
+                "weighted_outcome_n": s["weighted_n"],
                 "kind_success_rate": kind_sr,                       # 各類型成功率
                 "avg_latency_ms": (s["latency_sum"] / s["latency_n"] * 1000)
                                   if s["latency_n"] else 0.0,
@@ -764,6 +841,9 @@ class VECMultiEnv:
                                 if s["energy_n"] else 0.0,
                 "avg_cost": (s["cost_sum"] / s["energy_n"])
                             if s["energy_n"] else 0.0,
+                "avg_twin_age_s": (s["twin_age_sum"] / s["twin_age_n"])
+                                  if s["twin_age_n"] else 0.0,
+                "max_twin_age_s": s["twin_age_max"],
                 "deadline_miss": s["deadline_miss"], "infeasible": s["infeasible"],
                 "pred_reject": s["pred_reject"], "link_break": s["link_break"],
                 "break_recovered": s["break_recovered"],

@@ -20,8 +20,14 @@
 import os
 import random
 import numpy as np
-import gymnasium as gym
-from gymnasium import spaces
+try:
+    import gymnasium as gym
+    from gymnasium import spaces
+except ModuleNotFoundError:  # 多智能體 mock/不變量測試不需要 Gymnasium
+    class _GymShim:
+        Env = object
+    gym = _GymShim()
+    spaces = None
 
 from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
                         neighbors_in_range, rsus_in_range, contact_time)
@@ -229,6 +235,8 @@ class VECEnv(gym.Env):
                  arrival_rate=0.1, server_ratio=0.3, seed=0,
                  episode_decisions=500, rsus=None, mock_vehicles=8):
         super().__init__()
+        if spaces is None:
+            raise ImportError("VECEnv requires gymnasium; install it before DQN training")
         self.mock = mock
         self.gui = gui
         self.cfg = cfg

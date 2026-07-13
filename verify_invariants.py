@@ -8,6 +8,7 @@
 """
 import numpy as np
 
+from digital_twin import DigitalTwinStateStore
 from comm_model import data_rate, transmission_delay, contact_time
 from infra_config import (V2V_LINK, V2I_LINK, V2V_RANGE_M, RSU_RANGE_M,
                           VEHICLE_CPU, STRONG_VEHICLE_CPU,
@@ -159,6 +160,12 @@ obs, state = env.reset(seed=42)
 check("觀測維度 18、值域[0,1]", obs.shape[1] == 18 and
       float(obs.min()) >= 0.0 and float(obs.max()) <= 1.0)
 check("全域狀態維度 = RSU數+5", state.shape[0] == len(env.rsu_ids) + 5)
+masks = env.current_action_masks()
+check("action mask 維度正確且 local 永遠可用",
+      masks.shape == (obs.shape[0], env.n_actions) and bool(masks[:, 0].all()))
+sampled = env.sample_valid_actions(np.random.default_rng(123))
+check("random baseline 只抽樣孿生視角中的可行動作",
+      all(masks[i, action] for i, action in enumerate(sampled)))
 rng = np.random.default_rng(42)
 while True:
     rewards, obs, state, done, info = env.step(
@@ -177,6 +184,35 @@ check("帳務：consumer_left ≤ link_break(車主離場為斷線事件子類)"
       s["consumer_left"] <= s["link_break"])
 check("加權成功率存在且介於 0~1",
       0.0 <= s.get("weighted_success_rate", -1) <= 1.0)
+check("每筆成功/失敗恰好進入加權統計一次",
+      s.get("weighted_outcome_n", -1) == st["success"] + st["fail"])
+
+print("\n=== [8] 數位孿生時間邊界與 masked policy ===")
+store = DigitalTwinStateStore(delay_ticks=2)
+physical = {"v": {"pos": (0.0, 0.0), "speed": 1.0, "angle": 0.0}}
+store.update(0.0, physical)
+physical["v"]["pos"] = (99.0, 0.0)  # 呼叫端後續突變不得污染已存快照
+store.update(1.0, {"v": {"pos": (1.0, 0.0), "speed": 1.0, "angle": 0.0}})
+snap = store.update(2.0, {"v": {"pos": (2.0, 0.0), "speed": 1.0, "angle": 0.0}})
+check("τ=2 時決策讀 t-2 快照，且不被物理 dict 突變污染",
+      snap.states["v"]["pos"] == (0.0, 0.0) and snap.age_s == 2.0)
+
+# 終點強制結算發生在世界推進期間；驗證該 correction 會回到當前 transition，
+# 不會像舊實作一樣留在 _settle_delta 後直接結束回合。
+env_term = VECMultiEnv(mock=True, arrival_rate=0.2, mock_vehicles=8,
+                       episode_ticks=5)
+env_term.reset(seed=77)
+env_term._active = [("dummy", {"now": 0.0})]
+env_term._resolve_one = lambda ctx, action: 0.0
+def _finish_with_delta():
+    env_term._settle_delta = 3.0
+    return False
+env_term._advance_to_active = _finish_with_delta
+terminal_rewards, _, _, terminal_done, terminal_info = env_term.step(np.array([0]))
+check("terminal settlement reward 不遺失",
+      terminal_done and np.isclose(terminal_rewards[0], 3.0)
+      and np.isclose(terminal_info.get("settlement_delta", 0.0), 3.0))
+env_term.close()
 
 # 任務優先權：profile 抽樣範圍 + priority_aware 觀測維度
 from task_model import TASK_PROFILES as _TP
@@ -194,6 +230,16 @@ check("priority_aware：觀測 19 維且值域[0,1]",
       env_p.n_features == 19 and obs_p.shape[1] == 19
       and float(obs_p.min()) >= 0.0 and float(obs_p.max()) <= 1.0)
 env_p.close()
+
+env_tq = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24,
+                     server_ratio=0.45, episode_ticks=30,
+                     twin_quality_aware=True)
+obs_tq, state_tq = env_tq.reset(seed=10)
+check("twin_quality：觀測 +2、state +2，且值域[0,1]",
+      env_tq.n_features == 20 and obs_tq.shape[1] == 20
+      and state_tq.shape[0] == len(env_tq.rsu_ids) + 7
+      and float(obs_tq.min()) >= 0.0 and float(obs_tq.max()) <= 1.0)
+env_tq.close()
 
 # 抵達補送(arrival_delivery)白箱測試：mock 車輛不會離場，直接餵一筆
 # 「車主已離場」的在途任務給結算器，驗證補送路徑與計數正確。

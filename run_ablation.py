@@ -37,7 +37,7 @@ EVENT_KEYS = ("pred_reject", "link_break", "break_recovered", "break_failed",
 
 
 def run_episodes(env, mode, algo=None, episodes=6, seed0=2000):
-    succ, vis, lat, ener, cost = [], [], [], [], []
+    succ, vis, lat, ener, cost, twin_age = [], [], [], [], [], []
     events = {k: 0 for k in EVENT_KEYS}
     for ep in range(episodes):
         rng = np.random.default_rng(seed0 + ep)
@@ -53,9 +53,9 @@ def run_episodes(env, mode, algo=None, episodes=6, seed0=2000):
             if mode == "greedy":
                 actions = env.greedy_actions()
             elif mode == "random":
-                actions = rng.integers(0, env.n_actions, size=k)
+                actions = env.sample_valid_actions(rng)
             else:  # mappo
-                actions = algo.act_greedy(obs)
+                actions = algo.act_greedy(obs, env.current_action_masks())
             _, obs, state, done, info = env.step(actions)
             if done:
                 break
@@ -65,16 +65,20 @@ def run_episodes(env, mode, algo=None, episodes=6, seed0=2000):
         lat.append(s["avg_latency_ms"])
         ener.append(s["avg_energy_j"])
         cost.append(s.get("avg_cost", 0.0))
+        twin_age.append(s.get("avg_twin_age_s", 0.0))
         for k in EVENT_KEYS:
             events[k] += s.get(k, 0)
     return {"success": float(np.mean(succ)), "success_std": float(np.std(succ)),
             "vision": float(np.mean(vis)), "latency": float(np.mean(lat)),
             "energy": float(np.mean(ener)), "cost": float(np.mean(cost)),
+            "avg_twin_age_s": float(np.mean(twin_age)),
             **{k: events[k] for k in EVENT_KEYS}}
 
 
 def main():
     use_sumo = "--sumo" in sys.argv
+    priority = "--priority" in sys.argv
+    twin_quality = "--twin-quality" in sys.argv
     if use_sumo:
         base_cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300,
                         task_cpu_scale=1.0)
@@ -83,11 +87,16 @@ def main():
         base_cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24,
                         server_ratio=0.45, episode_ticks=300, task_cpu_scale=1.0)
         episodes = 6
+    if priority:
+        base_cfg["priority_aware"] = True
+    if twin_quality:
+        base_cfg["twin_quality_aware"] = True
+    artifact_suffix = ("_prio" if priority else "") + ("_tq" if twin_quality else "")
 
     # 有訓練好的模型就加入 MAPPO 策略
     policies = ["greedy", "random"]
     algo = None
-    model_path = os.path.join(SCRIPT_DIR, "mappo_vec.pt")
+    model_path = os.path.join(SCRIPT_DIR, f"mappo{artifact_suffix}_vec.pt")
     if os.path.exists(model_path):
         from mappo import MAPPO
         probe = VECMultiEnv(**base_cfg)

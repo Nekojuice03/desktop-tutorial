@@ -122,7 +122,38 @@ rsu/cloud 目標為靜止基站,仍用等速外推的 sojourn 檢查;本地不�
 依 E/cycle ∝ κf²(以單核頻率計)其每 cycle 能耗 = (1.5/1.0)² = 2.25× 弱車
 (`STRONG_VEHICLE_ENERGY_PER_CYCLE`)。強車「更快但更耗能」,移除免費午餐。
 
-## 五、避免「過度用雲」的機制（文獻做法,非硬調延遲）
+## 五、數位孿生狀態、時間邊界與資訊品質
+
+完整物理狀態定義為
+
+\[
+X_t=[X_t^{veh},X_t^{task},X_t^{net},X_t^{edge},X_t^{traffic}].
+\]
+
+決策器不可直接讀取 `TraciWorld` 的即時物理狀態，而只能取得同步延遲後的孿生觀測：
+
+\[
+o_{i,t}=h_i(X_{t-\tau})+\epsilon_{i,t},\qquad
+AoI_t=t-t_{observed}.
+\]
+
+`digital_twin.py` 將每個物理 snapshot 深拷貝並附上 `observed_at`、`received_at`
+與 AoI。`vec_env_ma.py` 中候選車、距離、RSU 覆蓋與 contact feature 全部使用
+此 delayed snapshot；只有任務執行與完成時刻結算可讀 `veh_states` 物理真值。
+因此 `run_dt_delay.py` 測量的是資訊過時造成的決策與執行落差，而非僅修改圖形或
+單一預測參數。
+
+選配 `twin_quality_aware=True`（CLI：`--twin-quality`）會把兩項品質特徵加入
+actor observation 與中央 state：
+
+- 正規化 AoI；
+- dead-reckoning 位置不確定性代理值
+  \(\sigma_p(\tau)=\sqrt{\sigma_{p0}^2+(\sigma_v\tau)^2}\)。
+
+此不確定性目前是可重現的解析代理值，不宣稱為實測 sensor covariance；未來可由
+VD/BSM data assimilation 或 EKF covariance 取代。
+
+## 六、避免「過度用雲」的機制（文獻做法,非硬調延遲）
 
 只把 `CLOUD_EXTRA_LATENCY` 調大屬「硬調旋鈕」;本專案改採文獻主流的兩個有原理機制,
 讓用雲在模型裡**自然產生代價**:
@@ -147,7 +178,7 @@ cost = 運算量(cycles) × 每 cycle 單價     (cloud 2e-10 > rsu 5e-11 > loca
 **可調**:`COST_W=0` 關閉成本項;`BACKHAUL_CAPACITY_BPS` 越小越早壅塞、越不鼓勵用雲。
 兩者皆比硬調 `CLOUD_EXTRA_LATENCY` 更有論文說服力。
 
-## 六、設計選擇與可調項
+## 七、設計選擇與可調項
 - **確定性通道**:不含隨機陰影(σ≈3dB)與快衰落,換取可重現性。若論文需隨機性,
   可在 `path_loss_db()` 加 log-normal 陰影項。
 - **覆蓋判斷**:以距離門檻(覆蓋半徑)代替 SINR 解碼門檻,為常見簡化。

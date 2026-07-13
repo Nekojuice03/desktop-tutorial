@@ -65,9 +65,9 @@ def run_episodes(env, mode, algo=None, episodes=8, seed0=1000):
             if mode == "greedy":
                 actions = env.greedy_actions()
             elif mode == "random":
-                actions = rng.integers(0, env.n_actions, size=k)
+                actions = env.sample_valid_actions(rng)
             elif mode == "mappo":
-                actions = algo.act_greedy(obs)
+                actions = algo.act_greedy(obs, env.current_action_masks())
             else:
                 actions = np.full(k, MA_ACTIONS.index(mode), dtype=np.int64)
             rewards, obs, state, done, info = env.step(actions)
@@ -96,6 +96,8 @@ def run_episodes(env, mode, algo=None, episodes=8, seed0=1000):
 
 def main():
     use_sumo = "--sumo" in sys.argv
+    priority = "--priority" in sys.argv
+    twin_quality = "--twin-quality" in sys.argv
     episodes = 5 if use_sumo else 10
 
     if use_sumo:
@@ -103,6 +105,11 @@ def main():
     else:
         cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                    episode_ticks=150, task_cpu_scale=1.0)
+    if priority:
+        cfg["priority_aware"] = True
+    if twin_quality:
+        cfg["twin_quality_aware"] = True
+    artifact_suffix = ("_prio" if priority else "") + ("_tq" if twin_quality else "")
 
     print(f"=== 公平對照（{'SUMO 真實車流' if use_sumo else 'mock 情境'}，"
           f"每法 {episodes} 回合）===\n")
@@ -111,7 +118,7 @@ def main():
     env0 = VECMultiEnv(**cfg)
     algo = MAPPO(obs_dim=env0.n_features, state_dim=env0.state_dim,
                  n_actions=env0.n_actions)
-    model_path = os.path.join(SCRIPT_DIR, "mappo_vec.pt")
+    model_path = os.path.join(SCRIPT_DIR, f"mappo{artifact_suffix}_vec.pt")
     has_model = os.path.exists(model_path)
     if has_model:
         try:
@@ -236,7 +243,7 @@ def main():
         saved.append(f3)
 
     # 圖4 / 圖5：收斂曲線(若有 csv)。依表頭解析多指標欄位。
-    csv_path = os.path.join(SCRIPT_DIR, "mappo_train_log.csv")
+    csv_path = os.path.join(SCRIPT_DIR, f"mappo_train_log{artifact_suffix}.csv")
     if os.path.exists(csv_path):
         with open(csv_path, encoding="utf-8") as f:
             header = f.readline().strip().split(",")

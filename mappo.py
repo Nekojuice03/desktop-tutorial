@@ -37,8 +37,18 @@ class Actor(nn.Module):
     def forward(self, obs):
         return self.net(obs)
 
-    def dist(self, obs):
-        return Categorical(logits=self.forward(obs))
+    def dist(self, obs, action_masks=None):
+        logits = self.forward(obs)
+        if action_masks is not None:
+            masks = torch.as_tensor(action_masks, dtype=torch.bool,
+                                    device=logits.device)
+            if masks.shape != logits.shape:
+                raise ValueError(
+                    f"action mask shape {tuple(masks.shape)} != logits {tuple(logits.shape)}")
+            if not bool(masks.any(dim=-1).all()):
+                raise ValueError("every agent must have at least one valid action")
+            logits = logits.masked_fill(~masks, torch.finfo(logits.dtype).min)
+        return Categorical(logits=logits)
 
 
 class Critic(nn.Module):
@@ -67,6 +77,9 @@ class MAPPO:
         兩者 actor 完全相同 → 效能差距即為「中央 critic(全域信用分配)」的價值。
         """
         self.central = central_critic
+        self.obs_dim = int(obs_dim)
+        self.state_dim = int(state_dim)
+        self.n_actions = int(n_actions)
         self.actor = Actor(obs_dim, n_actions).to(device)
         self.critic = Critic(state_dim if central_critic else obs_dim).to(device)
         self.opt = torch.optim.Adam(
@@ -85,22 +98,28 @@ class MAPPO:
 
     # ---------- 與環境互動（rollout 時用）----------
     @torch.no_grad()
-    def act(self, obs_batch):
+    def act(self, obs_batch, action_masks=None):
         """一批觀測 → 取樣動作 + log機率（探索用）。"""
         if len(obs_batch) == 0:
             return np.array([], dtype=np.int64), np.array([], dtype=np.float32)
         obs = torch.as_tensor(obs_batch, dtype=torch.float32, device=self.device)
-        dist = self.actor.dist(obs)
+        dist = self.actor.dist(obs, action_masks)
         a = dist.sample()
         return a.cpu().numpy(), dist.log_prob(a).cpu().numpy()
 
     @torch.no_grad()
-    def act_greedy(self, obs_batch):
+    def act_greedy(self, obs_batch, action_masks=None):
         """一批觀測 → 最佳動作（評估用，不探索）。"""
         if len(obs_batch) == 0:
             return np.array([], dtype=np.int64)
         obs = torch.as_tensor(obs_batch, dtype=torch.float32, device=self.device)
-        return self.actor.forward(obs).argmax(-1).cpu().numpy()
+        logits = self.actor.forward(obs)
+        if action_masks is not None:
+            masks = torch.as_tensor(action_masks, dtype=torch.bool, device=self.device)
+            if not bool(masks.any(dim=-1).all()):
+                raise ValueError("every agent must have at least one valid action")
+            logits = logits.masked_fill(~masks, torch.finfo(logits.dtype).min)
+        return logits.argmax(-1).cpu().numpy()
 
     @torch.no_grad()
     def value(self, state):
@@ -158,7 +177,7 @@ class MAPPO:
         adv = (adv - adv.mean()) / (adv.std() + 1e-8)   # 標準化，訓練更穩
 
         # 攤平所有 agent 樣本；同 tick 的 agent 共享該 tick 的 advantage/return
-        obs_all, act_all, logp_all, adv_all, ret_all = [], [], [], [], []
+        obs_all, act_all, logp_all, mask_all, adv_all, ret_all = [], [], [], [], [], []
         for t, tk in enumerate(ticks):
             k = len(tk["actions"])
             if k == 0:
@@ -166,12 +185,18 @@ class MAPPO:
             obs_all.append(tk["obs"])
             act_all.append(tk["actions"])
             logp_all.append(tk["logprobs"])
+            mask_all.append(tk.get(
+                "action_masks",
+                np.ones((k, self.n_actions), dtype=np.bool_),
+            ))
             adv_all.append(np.full(k, adv[t], dtype=np.float32))
             ret_all.append(np.full(k, ret[t], dtype=np.float32))
 
         obs_t = torch.as_tensor(np.concatenate(obs_all), dtype=torch.float32, device=self.device)
         act_t = torch.as_tensor(np.concatenate(act_all), dtype=torch.long, device=self.device)
         oldlogp_t = torch.as_tensor(np.concatenate(logp_all), dtype=torch.float32, device=self.device)
+        masks_t = torch.as_tensor(np.concatenate(mask_all), dtype=torch.bool,
+                                  device=self.device)
         adv_t = torch.as_tensor(np.concatenate(adv_all), dtype=torch.float32, device=self.device)
         ret_t = torch.as_tensor(ret, dtype=torch.float32, device=self.device)
         ret_agent_t = torch.as_tensor(np.concatenate(ret_all), dtype=torch.float32,
@@ -180,7 +205,7 @@ class MAPPO:
         last = {}
         for _ in range(self.epochs):
             # actor：PPO clip 目標
-            dist = self.actor.dist(obs_t)
+            dist = self.actor.dist(obs_t, masks_t)
             newlogp = dist.log_prob(act_t)
             entropy = dist.entropy().mean()
             ratio = torch.exp(newlogp - oldlogp_t)
@@ -208,14 +233,29 @@ class MAPPO:
                     "entropy": entropy.item()}
         return last
 
-    def save(self, path="mappo_vec.pt"):
+    def save(self, path="mappo_vec.pt", metadata=None):
         torch.save({"actor": self.actor.state_dict(),
-                    "critic": self.critic.state_dict()}, path)
+                    "critic": self.critic.state_dict(),
+                    "metadata": {
+                        "algorithm": "MAPPO" if self.central else "LocalCriticPPO",
+                        "obs_dim": self.obs_dim,
+                        "state_dim": self.state_dim,
+                        "n_actions": self.n_actions,
+                        **(metadata or {}),
+                    }}, path)
 
     def load(self, path="mappo_vec.pt"):
         ck = torch.load(path, map_location=self.device)
+        meta = ck.get("metadata", {})
+        expected = {"obs_dim": self.obs_dim, "state_dim": self.state_dim,
+                    "n_actions": self.n_actions}
+        mismatches = [f"{k}: checkpoint={meta[k]} current={v}"
+                      for k, v in expected.items() if k in meta and meta[k] != v]
+        if mismatches:
+            raise ValueError("checkpoint/environment mismatch: " + "; ".join(mismatches))
         self.actor.load_state_dict(ck["actor"])
         self.critic.load_state_dict(ck["critic"])
+        return meta
 
 
 # ==================================================================
@@ -235,6 +275,11 @@ if __name__ == "__main__":
     print(f"[1] act(): 5 個 agent → 動作 {actions}，log機率 {np.round(logps,2)}")
     print(f"    greedy 動作：{algo.act_greedy(obs_batch)}")
     print(f"    空 batch 不報錯：{algo.act(np.zeros((0,OBS_DIM),np.float32))[0].shape}")
+    only_local = np.zeros((5, N_ACT), dtype=np.bool_)
+    only_local[:, 0] = True
+    masked_actions, _ = algo.act(obs_batch, only_local)
+    assert np.all(masked_actions == 0), "action mask 未阻止不可行動作"
+    print(f"    action mask：僅 local 可行 → {masked_actions}")
 
     # 造一段假 rollout（每 tick 隨機數量 agent）
     rng = np.random.default_rng(0)

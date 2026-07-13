@@ -72,6 +72,8 @@ def main():
         return
 
     use_sumo = "--sumo" in sys.argv
+    priority = "--priority" in sys.argv
+    twin_quality = "--twin-quality" in sys.argv
     if use_sumo:
         base_cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300,
                         task_cpu_scale=1.0)
@@ -80,10 +82,15 @@ def main():
         base_cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24,
                         server_ratio=0.45, episode_ticks=300, task_cpu_scale=1.0)
         episodes = 6
+    if priority:
+        base_cfg["priority_aware"] = True
+    if twin_quality:
+        base_cfg["twin_quality_aware"] = True
+    artifact_suffix = ("_prio" if priority else "") + ("_tq" if twin_quality else "")
 
     policies = ["greedy"]
     algo = None
-    model_path = os.path.join(SCRIPT_DIR, "mappo_vec.pt")
+    model_path = os.path.join(SCRIPT_DIR, f"mappo{artifact_suffix}_vec.pt")
     if os.path.exists(model_path):
         from mappo import MAPPO
         probe = VECMultiEnv(**base_cfg)
@@ -104,14 +111,15 @@ def main():
     for pol in policies:
         for pred in PREDICTORS:
             print(f"\n── 策略 {pol} × 預判 {pred} ──")
-            print(f"  {'τ(s)':>5}{'成功率%':>8}{'vision%':>8}{'延遲ms':>8}"
+            print(f"  {'τ(s)':>5}{'AoI(s)':>8}{'成功率%':>8}{'vision%':>8}{'延遲ms':>8}"
                   f"{'預判拒':>7}{'斷線':>5}{'救回':>5}{'損失':>5}")
             for tau in TAUS:
                 env = VECMultiEnv(**base_cfg, predictor=pred, obs_delay=tau)
                 r = run_episodes(env, pol, algo=algo, episodes=episodes)
                 env.close()
                 results[f"{pol}/{pred}/tau{tau}"] = r
-                print(f"  {tau:5d}{r['success']:8.1f}{r['vision']:8.1f}"
+                print(f"  {tau:5d}{r['avg_twin_age_s']:8.2f}"
+                      f"{r['success']:8.1f}{r['vision']:8.1f}"
                       f"{r['latency']:8.0f}{r['pred_reject']:7d}{r['link_break']:5d}"
                       f"{r['break_recovered']:5d}{r['break_failed']:5d}")
 

@@ -28,6 +28,11 @@ flowchart TB
         SUMO["TraCI ↔ TraciWorld<br/>車輛位置/速度/航向/路線"]
     end
 
+    subgraph TWIN["🪞 數位孿生同步層"]
+        STORE["digital_twin.py<br/>時間戳快照 / AoI / 不確定性"]
+        BOUNDARY["決策只讀 delayed twin<br/>結算才讀 physical truth"]
+    end
+
     subgraph ENV["🎮 RL 環境 VECMultiEnv (vec_env_ma.py)"]
         COMM["comm_model.py<br/>C-V2X/3GPP 鏈路預算<br/>PL→SINR→Shannon"]
         TASK["task_model.py<br/>sensor/nav/vision 任務"]
@@ -47,7 +52,7 @@ flowchart TB
     VD2 --> FLOW
     RSU --> SUMO
     FLOW --> SUMO
-    SUMO --> ENV
+    SUMO --> STORE --> BOUNDARY --> ENV
     COMM --> NODES
     TASK --> NODES
     KF --> MOB
@@ -103,8 +108,9 @@ VD 對應(`vd_sumo_mapping.csv`)綁定路網,`--remap` 會自動偵測重建。
 | `task_model.py` | 三類任務(資料量/運算量/deadline)、Poisson 到達 |
 | `nodes.py` | 延遲分解、κf² 能耗、pay-per-use 成本、FIFO 佇列、回程壅塞、sojourn 約束 |
 | `kalman_tracker.py` | EKF-CTRV:僅用 BSM 觀測估轉彎率 ω → 預測連線壽命(可部署層) |
-| `vec_env_ma.py` | 多智能體環境:18維觀測、事件驅動結算、V2I遷移恢復、換手 |
-| `mappo.py` / `train_mappo.py` | CTDE MAPPO、GAE、LR 衰減、多指標評估(固定種子) |
+| `digital_twin.py` | 延遲快照、時間戳、AoI與不確定性；隔離孿生觀測和物理真值 |
+| `vec_env_ma.py` | 多智能體環境、可行動作遮罩、事件驅動結算、V2I遷移恢復、換手 |
+| `mappo.py` / `train_mappo.py` | Masked CTDE MAPPO、GAE、LR 衰減、完整 checkpoint metadata |
 | `setup_rsu.py` | RSU 佈點:junction(路口四角+路肩)/greedy 兩模式,自適應數量 |
 | `make_real_flow.py` | 台北 VD 真實車流→SUMO(路段/設備雙模式、僅小客車、自動對應+校對) |
 | `compare_and_plot.py` | 六方法對照(Local/RSU/Cloud/Random/Greedy/MAPPO)+多指標圖 |
@@ -120,6 +126,25 @@ VD 對應(`vd_sumo_mapping.csv`)綁定路網,`--remap` 會自動偵測重建。
 2. **三層異質完整成本模型**:κf² 分層能耗、pay-per-use 成本、有限回程壅塞 —— 三股力自然抑制「無腦上雲」。
 3. **移動性閉環(主要貢獻)**:`預判(admission) → 執行期真實位置驗證(事件驅動) → V2I 遷移恢復`,預判器三級階梯 **linear(naive) → kalman(EKF-CTRV,僅 BSM 可觀測量,可部署) → route(V2X 意圖分享,oracle 上界)**。
 4. **MAPPO 工程**:變動 agent 數、團隊獎勵、延遲信用結算(settle-delta)。
+
+### Correctness-first 重構說明
+
+- 決策候選、距離、覆蓋與 contact feature 一律取自帶時間戳的 twin snapshot；
+  SUMO/MockWorld 即時狀態只用於實際執行與完成時刻結算。
+- MAPPO 使用 action mask 排除孿生視角中不存在的強車、鄰車與 RSU；
+  contact-time 風險仍留給 admission control 與策略學習。
+- `--twin-quality` 會在觀測與中央狀態加入 AoI、位置不確定性代理值，需重新訓練。
+- 舊 `--ippo` 實際為共享 actor + 局部 critic 的資訊消融，現改稱
+  `--local-critic`／LocalCriticPPO；舊參數只保留為相容別名。
+
+```powershell
+python verify_invariants.py
+python train_mappo.py --sumo --twin-quality --seed=0
+python compare_and_plot.py --sumo --twin-quality
+python run_seeds.py --sumo --twin-quality --seeds 5
+python run_seeds.py --sumo --twin-quality --seeds 5 --local-critic
+python run_dt_delay.py --sumo --twin-quality --plot
+```
 
 **Mock 驗證成果**:MAPPO 與最強 baseline(Greedy)成功率打平(80.7% vs 80.9%),
 **能耗低 34%、使用成本僅 1/270**;學會分流(輕任務本地、重任務強車/邊緣)。
