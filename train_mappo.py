@@ -59,7 +59,7 @@ def evaluate(eval_env, algo, seeds=EVAL_SEEDS):
       成功率、vision-only 成功率、延遲、能耗、成本、動作分布。
     用獨立 eval_env + 固定 seeds → 每次評估面對相同情境，收斂曲線穩定可重現。
     """
-    succ, vis, lat, ener, cost = [], [], [], [], []
+    succ, vis, lat, ener, cost, wsr = [], [], [], [], [], []
     act_count = Counter()
     for sd in seeds:
         obs, state = eval_env.reset(seed=sd)
@@ -80,13 +80,16 @@ def evaluate(eval_env, algo, seeds=EVAL_SEEDS):
         s = info["episode_stats"]
         succ.append(s["success_rate"])
         vis.append(s.get("vision_success_rate", 0.0))
+        wsr_l = s.get("weighted_success_rate", 0.0)
         lat.append(s["avg_latency_ms"])
         ener.append(s["avg_energy_j"])
         cost.append(s.get("avg_cost", 0.0))
+        wsr.append(wsr_l)
     total = sum(act_count.values())
     dist = {k: round(act_count[k] / total * 100) for k in ACTIONS} if total else {}
     return {"sr": float(np.mean(succ)) * 100,
             "vis": float(np.mean(vis)) * 100,
+            "wsr": float(np.mean(wsr)) * 100,
             "lat": float(np.mean(lat)),
             "en": float(np.mean(ener)),
             "cost": float(np.mean(cost)),
@@ -108,9 +111,14 @@ def main():
 
     # --ippo：IPPO 消融(critic 只看局部觀測，無全域資訊；其餘完全相同)
     ippo = "--ippo" in sys.argv
-    algo_name = "IPPO" if ippo else "MAPPO"
-    model_out = "ippo_vec.pt" if ippo else "mappo_vec.pt"
-    log_name = "mappo_train_log_ippo.csv" if ippo else "mappo_train_log.csv"
+    # --priority：任務優先權延伸實驗(觀測+1維、延遲/罰則按優先權加權；獨立輸出檔)
+    priority = "--priority" in sys.argv
+    if priority:
+        cfg["priority_aware"] = True
+    algo_name = ("IPPO" if ippo else "MAPPO") + ("+priority" if priority else "")
+    suffix = ("_ippo" if ippo else "") + ("_prio" if priority else "")
+    model_out = f"mappo{suffix}_vec.pt" if suffix else "mappo_vec.pt"
+    log_name = f"mappo_train_log{suffix}.csv" if suffix else "mappo_train_log.csv"
 
     env = VECMultiEnv(**cfg)
     # 獨立的評估環境(同設定，但種子由 EVAL_SEEDS 固定，與訓練環境互不干擾)
@@ -122,8 +130,8 @@ def main():
 
     print("訓練前(未學習)評估：")
     m0 = evaluate(eval_env, algo)
-    print(f"  成功率 {m0['sr']:.1f}%（vision {m0['vis']:.1f}%），延遲 {m0['lat']:.0f}ms，"
-          f"能耗 {m0['en']:.3f}J，成本 {m0['cost']:.4f}，分布 {m0['dist']}\n")
+    print(f"  成功率 {m0['sr']:.1f}%（vision {m0['vis']:.1f}%，加權 {m0['wsr']:.1f}%），"
+          f"延遲 {m0['lat']:.0f}ms，能耗 {m0['en']:.3f}J，成本 {m0['cost']:.4f}，分布 {m0['dist']}\n")
 
     # 收斂曲線記錄(供 compare_and_plot 畫圖)：多指標
     log_path = os.path.join(SCRIPT_DIR, log_name)

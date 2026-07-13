@@ -19,22 +19,25 @@ from dataclasses import dataclass
 # 任務類型範本：不同應用有不同的資料量/運算量/deadline
 # (數值為範圍，產生時在範圍內隨機取；weight = 出現的相對頻率)
 TASK_PROFILES = {
-    "sensor": {   # 感測資料聚合：很輕、本地就能快速做完
+    "sensor": {   # 感測資料聚合：很輕、但屬安全類遙測 → 延遲敏感、優先權高
         "data_bits":  (0.3e6, 1.0e6),
         "cpu_cycles": (0.05e9, 0.2e9),
         "deadline":   (0.3, 0.6),
+        "priority":   (1.2, 1.8),   # 計算量小但需要低延遲
         "weight": 4,
     },
-    "nav": {      # 導航/路徑規劃：中等
+    "nav": {      # 導航/路徑規劃：中等、可容忍 → 基準優先權
         "data_bits":  (1.0e6, 3.0e6),
         "cpu_cycles": (0.3e9, 0.8e9),
         "deadline":   (1.0, 2.0),
+        "priority":   (0.8, 1.2),
         "weight": 3,
     },
-    "vision": {   # 影像/物件辨識：很重，本地算不動 → 必須卸載(強車/基站/雲)
+    "vision": {   # 影像/物件辨識(影音類)：重、且需低延遲又及時 → 優先權最高
         "data_bits":  (3.0e6, 8.0e6),
         "cpu_cycles": (3.0e9, 6.0e9),
         "deadline":   (1.0, 2.0),
+        "priority":   (1.5, 2.5),
         "weight": 3,
     },
 }
@@ -52,6 +55,8 @@ class Task:
     deadline_s: float    # 從產生起算，最多容許幾秒完成
     created_at: float    # 產生時間(模擬秒)
     result_bits: float   # 回傳結果的資料量(bit)
+    priority: float = 1.0  # ★任務優先權(依 profile 抽樣)：加權延遲/超時罰則與
+                           #   加權成功率；預設 1.0 相容既有程式
 
     def age(self, now):
         """任務已存在多久(秒)。"""
@@ -95,6 +100,7 @@ class TaskGenerator:
             deadline_s=self.rng.uniform(*p["deadline"]) * self.deadline_scale,
             created_at=now,
             result_bits=data * RESULT_RATIO,
+            priority=self.rng.uniform(*p.get("priority", (1.0, 1.0))),
         )
 
     def step(self, client_ids, now, dt=1.0):

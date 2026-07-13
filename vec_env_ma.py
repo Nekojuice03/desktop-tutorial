@@ -48,7 +48,7 @@ class VECMultiEnv:
                  episode_ticks=200, rsus=None, mock_vehicles=24,
                  task_cpu_scale=1.0, task_deadline_scale=1.0,
                  predictor="kalman", recovery="v2i", obs_delay=0,
-                 arrival_delivery=False):
+                 arrival_delivery=False, priority_aware=False):
         """
         predictor：V2V 連線壽命預判器(消融階梯：naive → 可部署 → oracle)
           "linear" = 等速直線外推(baseline，路口轉彎會高估)
@@ -71,12 +71,20 @@ class VECMultiEnv:
           車主離場 → 結果經 執行端→RSU→(有線)→車主停靠處RSU→車主 補送
           (計 break_recovered+arrival_delivered，可能因補送延遲超時)。
           假設「結果對已抵達車主仍具價值」(論文聲明)。
+        priority_aware：★任務優先權(延伸實驗，預設 False=行為完全不變)。
+          任務依 profile 帶優先權(sensor 1.2-1.8 輕但延遲敏感、nav 0.8-1.2、
+          vision 1.5-2.5 影音低延遲又及時)。開啟後：
+          (a) 觀測 +1 維(優先權) → n_features=19，需重訓；
+          (b) 獎勵之「延遲、超時/失敗罰則」按優先權加權 → 資源競爭時
+              高優先任務優先被照顧；能耗/成本項不加權(系統資源與任務價值無關)。
+          無論開關，皆回報 weighted_success_rate(優先權加權成功率)。
         """
         self.mock = mock
         self.predictor = predictor
         self.recovery = recovery
         self.obs_delay = int(obs_delay)
         self.arrival_delivery = arrival_delivery
+        self.priority_aware = priority_aware
         self.gui = gui
         self.cfg = cfg
         self.arrival_rate = arrival_rate
@@ -97,7 +105,7 @@ class VECMultiEnv:
             self.rsus = {rid: {"x": v["x"], "y": v["y"]}
                          for rid, v in load_rsus().items()}
 
-        self.n_features = MA_N_FEATURES
+        self.n_features = MA_N_FEATURES + (1 if priority_aware else 0)
         self.n_actions = len(MA_ACTIONS)
         self.rsu_ids = sorted(self.rsus.keys())
         # 全域狀態：各基站負載 + 回程壅塞 + 活躍數 + 平均本地負載 + 車數 + 強車數
@@ -242,7 +250,8 @@ class VECMultiEnv:
             nr_strong,                                # 最近鄰車本身是不是強車
             _clip01(nr_contact / CONTACT_NORM),
             _clip01(self.nodes.wait_time("backhaul", now) / WAIT_NORM),  # 回程壅塞
-        ], dtype=np.float32)
+        ] + ([_clip01(task.priority / 2.5)] if self.priority_aware else []),
+            dtype=np.float32)
 
     def _global_state(self, now, n_active):
         parts = [_clip01(self.nodes.wait_time(rid, now) / WAIT_NORM)
@@ -379,12 +388,14 @@ class VECMultiEnv:
         else:  # cloud
             tid, tpos, reach = "cloud", ctx["rsu_pos"], ctx["rsu_id"] is not None
 
+        w = task.priority if self.priority_aware else 1.0
         self.stats["by_target"][kind] = self.stats["by_target"].get(kind, 0) + 1
         if not reach:
             self.stats["fail"] += 1
             self.stats["infeasible"] += 1
             self._record_kind(task.kind, False)
-            return -PENALTY_FAIL
+            self.stats["wsum"] += task.priority
+            return -w * PENALTY_FAIL
 
         # V2V 兩種動作在成本模型裡都是 "v2v"
         est_kind = "v2v" if kind in ("v2v_strong", "v2v_near") else kind
@@ -401,15 +412,18 @@ class VECMultiEnv:
             else:
                 self.stats["infeasible"] += 1
             self._record_kind(task.kind, False)
-            return -PENALTY_FAIL
+            self.stats["wsum"] += task.priority
+            return -w * PENALTY_FAIL
 
         total = ctx["hop"] + r["latency"]
         energy = r["energy"] + ctx["hop_energy"]   # 含指派跳(client→server)的傳輸能耗
         # 能耗正規化(同 vec_env) + 使用成本項(方法②)：讓本地/邊緣/雲的能耗與成本
         # 差異被公平比較，且「過度用雲」多付一份代價。
-        reward = -(total + ENERGY_W * energy / ENERGY_NORM + COST_W * r["cost"])
+        # ★優先權加權：延遲與超時罰則 ×w(高優先任務的時間更「貴」)；
+        #   能耗/成本為系統資源，與任務價值無關 → 不加權
+        reward = -(w * total + ENERGY_W * energy / ENERGY_NORM + COST_W * r["cost"])
         if total > task.deadline_s:
-            reward -= PENALTY_MISS
+            reward -= w * PENALTY_MISS
 
         if est_kind != "local":
             # ★事件驅動結算(V2V 與 RSU/雲一視同仁，避免只有 V2V 承受執行期風險)：
@@ -422,7 +436,7 @@ class VECMultiEnv:
                 "serving_rsu": ctx["rsu_id"],   # infra：執行/轉送用的服務基站
                 "t_done": now + r["latency"],   # now 已含指派跳時刻
                 "total": total, "energy": energy, "cost": r["cost"],
-                "pred_reward": reward,
+                "pred_reward": reward, "w": w,
             })
             return reward
 
@@ -431,7 +445,10 @@ class VECMultiEnv:
         return reward
 
     def _finalize(self, total, energy, cost, task, ok):
-        """把一筆任務的最終結果記進統計(成功/超時、延遲/能耗/成本、任務類型)。"""
+        """把一筆任務的最終結果記進統計(成功/超時、延遲/能耗/成本、任務類型、加權成功)。"""
+        self.stats["wsum"] += task.priority
+        if ok:
+            self.stats["wsucc"] += task.priority
         self.stats["latency_sum"] += total
         self.stats["latency_n"] += 1
         self.stats["energy_sum"] += energy
@@ -478,7 +495,7 @@ class VECMultiEnv:
         self.stats["break_failed"] += 1
         self.stats["fail"] += 1
         self._record_kind(f["task"].kind, False)
-        self._settle_delta += (-PENALTY_FAIL) - f["pred_reward"]
+        self._settle_delta += (-f.get("w", 1.0) * PENALTY_FAIL) - f["pred_reward"]
 
     def _deliver_to_departed(self, f):
         """
@@ -523,8 +540,9 @@ class VECMultiEnv:
         self.stats["break_recovered"] += 1
         self.stats["arrival_delivered"] += 1
         self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
-        new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
-                       + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
+        w = f.get("w", 1.0)
+        new_reward = -(w * new_total + ENERGY_W * new_energy / ENERGY_NORM
+                       + COST_W * f["cost"]) - (0.0 if ok else w * PENALTY_MISS)
         self._settle_delta += new_reward - f["pred_reward"]
         return True
 
@@ -557,8 +575,9 @@ class VECMultiEnv:
                     ok = new_total <= task.deadline_s
                     self.stats["rsu_handover"] += 1
                     self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
-                    new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
-                                   + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
+                    w = f.get("w", 1.0)
+                    new_reward = -(w * new_total + ENERGY_W * new_energy / ENERGY_NORM
+                                   + COST_W * f["cost"]) - (0.0 if ok else w * PENALTY_MISS)
                     self._settle_delta += new_reward - f["pred_reward"]
                     return
             self._fail_settle(f)   # 覆蓋空洞：無任何 RSU 可送達
@@ -603,8 +622,9 @@ class VECMultiEnv:
                         ok = new_total <= task.deadline_s
                         self.stats["break_recovered"] += 1
                         self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
-                        new_reward = -(new_total + ENERGY_W * new_energy / ENERGY_NORM
-                                       + COST_W * f["cost"]) - (0.0 if ok else PENALTY_MISS)
+                        w = f.get("w", 1.0)
+                        new_reward = -(w * new_total + ENERGY_W * new_energy / ENERGY_NORM
+                                       + COST_W * f["cost"]) - (0.0 if ok else w * PENALTY_MISS)
                         self._settle_delta += new_reward - f["pred_reward"]
                         return
         # 無法恢復(持有車離場且無法補送、策略=fail、或任一側無 RSU 覆蓋)
@@ -657,7 +677,8 @@ class VECMultiEnv:
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
                       "cost_sum": 0.0, "by_target": {},
-                      "kind_total": {}, "kind_success": {}}   # 各任務類型成功率
+                      "kind_total": {}, "kind_success": {},   # 各任務類型成功率
+                      "wsum": 0.0, "wsucc": 0.0}               # 優先權加權成功率
 
     def _record_kind(self, kind, ok):
         """記錄某任務類型的成敗（給 vision-only 等分類型成功率用）。"""
@@ -735,6 +756,7 @@ class VECMultiEnv:
         return {"generated": s["generated"],
                 "success_rate": (s["success"] / done) if done else 0.0,
                 "vision_success_rate": kind_sr.get("vision", 0.0),  # 重任務成功率(動態範圍大)
+                "weighted_success_rate": (s["wsucc"] / s["wsum"]) if s["wsum"] else 0.0,
                 "kind_success_rate": kind_sr,                       # 各類型成功率
                 "avg_latency_ms": (s["latency_sum"] / s["latency_n"] * 1000)
                                   if s["latency_n"] else 0.0,

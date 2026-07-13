@@ -175,6 +175,25 @@ check("帳務：link_break = recovered + failed",
       s["link_break"] == s["break_recovered"] + s["break_failed"])
 check("帳務：consumer_left ≤ link_break(車主離場為斷線事件子類)",
       s["consumer_left"] <= s["link_break"])
+check("加權成功率存在且介於 0~1",
+      0.0 <= s.get("weighted_success_rate", -1) <= 1.0)
+
+# 任務優先權：profile 抽樣範圍 + priority_aware 觀測維度
+from task_model import TASK_PROFILES as _TP
+gen2 = TaskGenerator(arrival_rate=1.0, seed=5)
+_ts = []
+for step in range(80):
+    _ts += gen2.step(["c1"], now=float(step))
+ok_rng = all(_TP[t.kind]["priority"][0] <= t.priority <= _TP[t.kind]["priority"][1]
+             for t in _ts)
+check("任務優先權落在各 profile 範圍(sensor/nav/vision)", ok_rng)
+env_p = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24,
+                    server_ratio=0.45, episode_ticks=30, priority_aware=True)
+obs_p, _ = env_p.reset(seed=9)
+check("priority_aware：觀測 19 維且值域[0,1]",
+      env_p.n_features == 19 and obs_p.shape[1] == 19
+      and float(obs_p.min()) >= 0.0 and float(obs_p.max()) <= 1.0)
+env_p.close()
 
 # 抵達補送(arrival_delivery)白箱測試：mock 車輛不會離場，直接餵一筆
 # 「車主已離場」的在途任務給結算器，驗證補送路徑與計數正確。
@@ -185,15 +204,19 @@ env_ad.reset(seed=3)
 _t = _Task("tad", "cX", "nav", data_bits=2e6, cpu_cycles=0.5e9,
            deadline_s=5.0, created_at=0.0, result_bits=2e5)
 env_ad._last_seen["ghost_owner"] = (100.0, 0.0)   # 停靠處在 rsu_0(0,0) 覆蓋內
+_before = {k: env_ad.stats[k] for k in
+           ("arrival_delivered", "break_recovered", "consumer_left",
+            "break_failed", "success")}
 env_ad._settle_one({"mode": "infra", "task": _t, "helper": "rsu_0",
                     "holder": "ghost_owner", "serving_rsu": "rsu_0",
                     "t_done": 0.0, "total": 0.5, "energy": 1.0,
                     "cost": 0.0, "pred_reward": -1.0})
 sa = env_ad.stats
+_d = {k: sa[k] - _before[k] for k in _before}   # 差分：不受 reset 期間 fallback 影響
 check("抵達補送：車主離場經 RSU 補送成功且計數正確",
-      sa["arrival_delivered"] == 1 and sa["break_recovered"] == 1
-      and sa["consumer_left"] == 1 and sa["break_failed"] == 0
-      and sa["success"] == 1)
+      _d["arrival_delivered"] == 1 and _d["break_recovered"] == 1
+      and _d["consumer_left"] == 1 and _d["break_failed"] == 0
+      and _d["success"] == 1)
 env_ad.close()
 check("回合有實際處理任務(>200)", st["latency_n"] > 200, f"{st['latency_n']} 筆")
 env.close()
