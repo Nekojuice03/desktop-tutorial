@@ -75,6 +75,9 @@ def record_episode(env, algo, ticks_limit):
                     f"{(s['success']/done_n*100 if done_n else 0):.1f}%   "
                     f"breaks {s['link_break']} (recovered {s['break_recovered']})   "
                     f"pred-reject {s['pred_reject']}"),
+            # 累計決策分布(直接畫在圖上，數值核對 V2V 是否真的有發生)
+            "dist": {k: s["by_target"].get(k, 0) for k in
+                     ("local", "v2v_strong", "v2v_near", "rsu", "cloud")},
         })
         if done or env.tick_count >= ticks_limit:
             break
@@ -131,9 +134,14 @@ def draw_frame(ax, fr, env, net_shapes, tau, bounds=None):
         ax.scatter(tp[0], tp[1], s=34, color=KIND_COLOR[kind],
                    marker="X", edgecolor="white", linewidths=0.5, zorder=8)
     ax.set_title("Digital-Twin View — offloading decisions in real time")
-    ax.text(0.01, 0.01, fr["hud"], transform=ax.transAxes, fontsize=9,
-            family="monospace", va="bottom",
-            bbox=dict(fc="white", alpha=0.8, ec="none"))
+    d = fr.get("dist", {})
+    dist_txt = ("decisions so far  "
+                f"local {d.get('local',0)}  V2V-strong {d.get('v2v_strong',0)}  "
+                f"V2V-near {d.get('v2v_near',0)}  RSU {d.get('rsu',0)}  "
+                f"Cloud {d.get('cloud',0)}")
+    ax.text(0.01, 0.01, fr["hud"] + "\n" + dist_txt, transform=ax.transAxes,
+            fontsize=8, family="monospace", va="bottom",
+            bbox=dict(fc="white", alpha=0.85, ec="none"))
     ax.set_aspect("equal")
     if bounds:   # 視圖鎖定路網邊界(避免範圍外元素拉歪畫面)
         ax.set_xlim(bounds[0] - 30, bounds[2] + 30)
