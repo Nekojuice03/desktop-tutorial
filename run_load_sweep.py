@@ -25,6 +25,7 @@ from collections import Counter
 import numpy as np
 
 from vec_env_ma import VECMultiEnv, MA_ACTIONS, SCRIPT_DIR
+from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
 
 RATES = [0.15, 0.3, 0.5, 0.8, 1.2]   # 任務到達率(每 client 每秒)
 EPISODES = 4
@@ -70,8 +71,10 @@ def main():
     use_sumo = "--sumo" in sys.argv
     priority = "--priority" in sys.argv
     twin_quality = "--twin-quality" in sys.argv
+    scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
     if use_sumo:
         base = dict(mock=False, episode_ticks=300, task_cpu_scale=1.0)
+        base.update(env_scenario_kwargs(scenario, vd_mode))
     else:
         base = dict(mock=True, mock_vehicles=24, server_ratio=0.45,
                     episode_ticks=300, task_cpu_scale=1.0)
@@ -79,7 +82,8 @@ def main():
         base["priority_aware"] = True
     if twin_quality:
         base["twin_quality_aware"] = True
-    artifact_suffix = ("_prio" if priority else "") + ("_tq" if twin_quality else "")
+    artifact_suffix = model_suffix(priority=priority, twin_quality=twin_quality,
+                                   scenario=scenario, vd_mode=vd_mode)
 
     mode = "greedy"
     algo = None
@@ -112,7 +116,7 @@ def main():
               f"{r['energy']:7.2f}{r['cost']:7.3f}  "
               + "".join(f"{r['share'][a]:10.1f}%" for a in ACTION_ORDER))
 
-    out = os.path.join(SCRIPT_DIR, "load_sweep_results.json")
+    out = os.path.join(SCRIPT_DIR, f"load_sweep_results{artifact_suffix}.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\n數據已存 {out}")
@@ -157,7 +161,7 @@ def main():
         ax2.set_title("Robustness under load")
         ax2.grid(alpha=0.3)
         plt.tight_layout()
-        fp = os.path.join(SCRIPT_DIR, "fig_load_sweep.png")
+        fp = os.path.join(SCRIPT_DIR, f"fig_load_sweep{artifact_suffix}.png")
         plt.savefig(fp, dpi=150); plt.close()
         print(f"已產生 {fp}")
 

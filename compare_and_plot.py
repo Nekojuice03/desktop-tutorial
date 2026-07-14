@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 
 from vec_env_ma import VECMultiEnv, MA_ACTIONS, SCRIPT_DIR
 from mappo import MAPPO
+from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
 
 # 評估方法清單：(顯示名稱(英文,給圖表用), mode)
 METHODS = [
@@ -98,10 +99,12 @@ def main():
     use_sumo = "--sumo" in sys.argv
     priority = "--priority" in sys.argv
     twin_quality = "--twin-quality" in sys.argv
+    scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
     episodes = 5 if use_sumo else 10
 
     if use_sumo:
         cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300, task_cpu_scale=1.0)
+        cfg.update(env_scenario_kwargs(scenario, vd_mode))
     else:
         cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                    episode_ticks=150, task_cpu_scale=1.0)
@@ -109,7 +112,8 @@ def main():
         cfg["priority_aware"] = True
     if twin_quality:
         cfg["twin_quality_aware"] = True
-    artifact_suffix = ("_prio" if priority else "") + ("_tq" if twin_quality else "")
+    artifact_suffix = model_suffix(priority=priority, twin_quality=twin_quality,
+                                   scenario=scenario, vd_mode=vd_mode)
 
     print(f"=== 公平對照（{'SUMO 真實車流' if use_sumo else 'mock 情境'}，"
           f"每法 {episodes} 回合）===\n")
@@ -152,7 +156,7 @@ def main():
               f"成本 {r['cost_mean']:.4f}")
 
     # 存 JSON
-    out_json = os.path.join(SCRIPT_DIR, "compare_results.json")
+    out_json = os.path.join(SCRIPT_DIR, f"compare_results{artifact_suffix}.json")
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\n數據已存 {out_json}")
@@ -173,7 +177,7 @@ def main():
         ax.text(b.get_x() + b.get_width()/2, v + 1.5, f"{v:.1f}", ha="center", fontsize=9)
     plt.xticks(rotation=20, ha="right")
     plt.tight_layout()
-    f1 = os.path.join(SCRIPT_DIR, "fig_success.png")
+    f1 = os.path.join(SCRIPT_DIR, f"fig_success{artifact_suffix}.png")
     plt.savefig(f1, dpi=150); plt.close()
 
     # 圖2：平均延遲
@@ -187,7 +191,7 @@ def main():
         ax.text(b.get_x() + b.get_width()/2, v + max(lm)*0.01, f"{v:.0f}", ha="center", fontsize=9)
     plt.xticks(rotation=20, ha="right")
     plt.tight_layout()
-    f2 = os.path.join(SCRIPT_DIR, "fig_latency.png")
+    f2 = os.path.join(SCRIPT_DIR, f"fig_latency{artifact_suffix}.png")
     plt.savefig(f2, dpi=150); plt.close()
 
     saved = [f1, f2]
@@ -203,7 +207,7 @@ def main():
         ax.text(b.get_x() + b.get_width()/2, v + max(em)*0.01, f"{v:.3f}", ha="center", fontsize=8)
     plt.xticks(rotation=20, ha="right")
     plt.tight_layout()
-    f2b = os.path.join(SCRIPT_DIR, "fig_energy.png")
+    f2b = os.path.join(SCRIPT_DIR, f"fig_energy{artifact_suffix}.png")
     plt.savefig(f2b, dpi=150); plt.close()
     saved.append(f2b)
 
@@ -219,7 +223,7 @@ def main():
                 ha="center", fontsize=8)
     plt.xticks(rotation=20, ha="right")
     plt.tight_layout()
-    f2c = os.path.join(SCRIPT_DIR, "fig_cost.png")
+    f2c = os.path.join(SCRIPT_DIR, f"fig_cost{artifact_suffix}.png")
     plt.savefig(f2c, dpi=150); plt.close()
     saved.append(f2c)
 
@@ -238,7 +242,7 @@ def main():
         for b, v in zip(bars, vals):
             ax.text(b.get_x() + b.get_width()/2, v + 1, f"{v:.0f}%", ha="center", fontsize=9)
         plt.tight_layout()
-        f3 = os.path.join(SCRIPT_DIR, "fig_action_dist.png")
+        f3 = os.path.join(SCRIPT_DIR, f"fig_action_dist{artifact_suffix}.png")
         plt.savefig(f3, dpi=150); plt.close()
         saved.append(f3)
 
@@ -279,7 +283,7 @@ def main():
             ax.set_title(f"MAPPO Training Convergence ({tag})")
             ax.grid(alpha=0.3); ax.legend(loc="lower right")
             plt.tight_layout()
-            f4 = os.path.join(SCRIPT_DIR, "fig_convergence.png")
+            f4 = os.path.join(SCRIPT_DIR, f"fig_convergence{artifact_suffix}.png")
             plt.savefig(f4, dpi=150); plt.close(); saved.append(f4)
 
         # 圖5：多指標收斂(成功率 / vision 成功率 / 延遲 / 能耗 / 成本)2x3 面板
@@ -306,7 +310,7 @@ def main():
                 ax.axis("off")
             fig.suptitle(f"MAPPO Convergence — multi-metric ({tag})", fontsize=13)
             plt.tight_layout()
-            f5 = os.path.join(SCRIPT_DIR, "fig_convergence_metrics.png")
+            f5 = os.path.join(SCRIPT_DIR, f"fig_convergence_metrics{artifact_suffix}.png")
             plt.savefig(f5, dpi=150); plt.close(); saved.append(f5)
 
     print("已產生圖檔：")

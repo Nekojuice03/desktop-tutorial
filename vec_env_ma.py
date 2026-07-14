@@ -20,6 +20,7 @@ import numpy as np
 
 from digital_twin import DigitalTwinStateStore
 from kalman_tracker import EKFCTRV, predict_contact, predict_contact_static
+from vd_provider import VDTrafficProvider
 
 from comm_model import (distance, transmission_delay, velocity_from_speed_angle,
                         neighbors_in_range, rsus_in_range, contact_time)
@@ -45,13 +46,16 @@ TWIN_AGE_NORM = 8.0
 
 
 class VECMultiEnv:
-    def __init__(self, mock=True, gui=False, cfg="osm.sumocfg",
+    def __init__(self, mock=True, gui=False, cfg="heping.sumocfg",
                  arrival_rate=0.3, server_ratio=0.4, seed=0,
                  episode_ticks=200, rsus=None, mock_vehicles=24,
                  task_cpu_scale=1.0, task_deadline_scale=1.0,
                  predictor="kalman", recovery="v2i", obs_delay=0,
                  arrival_delivery=False, priority_aware=False,
-                 twin_quality_aware=False):
+                 twin_quality_aware=False, scenario="heping", rsu_path=None,
+                 vd_mode="static", vd_mapping=None, vd_data_dir=None,
+                 vd_net_file=None, vd_dynamic_routes=None,
+                 vd_update_interval=300.0):
         """
         predictor：V2V 連線壽命預判器(消融階梯：naive → 可部署 → oracle)
           "linear" = 等速直線外推(baseline，路口轉彎會高估)
@@ -91,6 +95,14 @@ class VECMultiEnv:
         self.twin_quality_aware = twin_quality_aware
         self.gui = gui
         self.cfg = cfg
+        self.scenario = scenario
+        self.rsu_path = rsu_path
+        self.vd_mode = vd_mode
+        self.vd_mapping = vd_mapping
+        self.vd_data_dir = vd_data_dir
+        self.vd_net_file = vd_net_file
+        self.vd_dynamic_routes = vd_dynamic_routes
+        self.vd_update_interval = float(vd_update_interval)
         self.arrival_rate = arrival_rate
         self.server_ratio = server_ratio
         self.episode_ticks = episode_ticks
@@ -107,7 +119,7 @@ class VECMultiEnv:
         else:
             os.chdir(SCRIPT_DIR)
             self.rsus = {rid: {"x": v["x"], "y": v["y"]}
-                         for rid, v in load_rsus().items()}
+                         for rid, v in load_rsus(self.rsu_path).items()}
 
         self.n_features = (MA_N_FEATURES + (1 if priority_aware else 0)
                            + (2 if twin_quality_aware else 0))
@@ -311,6 +323,10 @@ class VECMultiEnv:
         self.stats["twin_age_sum"] += self.twin_age_s
         self.stats["twin_age_n"] += 1
         self.stats["twin_age_max"] = max(self.stats["twin_age_max"], self.twin_age_s)
+        traffic = self.world.traffic_status() if hasattr(self.world, "traffic_status") else {}
+        self._traffic_status = traffic
+        self.stats["vd_age_sum"] += float(traffic.get("vd_data_age_s", 0.0))
+        self.stats["vd_age_n"] += 1
         # 記住每台車最後出現的位置：車輛抵達終點會從模擬消失(despawn)，
         # 結算時若執行車已離場，用它離場前的位置做「優雅退場交接」(見 _settle_one)
         for vid, s in veh_states.items():
@@ -745,6 +761,7 @@ class VECMultiEnv:
                       "cost_sum": 0.0, "by_target": {},
                       "twin_age_sum": 0.0, "twin_age_n": 0,
                       "twin_age_max": 0.0,
+                      "vd_age_sum": 0.0, "vd_age_n": 0,
                       "kind_total": {}, "kind_success": {},   # 各任務類型成功率
                       "wsum": 0.0, "wsucc": 0.0,
                       "weighted_n": 0}                           # 每筆結果恰入帳一次
@@ -759,8 +776,21 @@ class VECMultiEnv:
         if self.world is not None:
             self.world.close()
         s = self.base_seed + self._ep if seed is None else seed
+        provider = None
+        if not self.mock and self.vd_mode in ("replay", "live"):
+            required = (self.vd_mapping, self.vd_data_dir, self.vd_net_file)
+            if not all(required):
+                raise ValueError("dynamic VD mode requires mapping, data dir, and net file")
+            provider = VDTrafficProvider(
+                mode=self.vd_mode,
+                mapping_path=self.vd_mapping,
+                data_dir=self.vd_data_dir,
+                net_file=self.vd_net_file,
+                update_interval=self.vd_update_interval,
+            )
         self.world = MockWorld(n=self.mock_vehicles, seed=s) if self.mock \
-            else TraciWorld(self.cfg, gui=self.gui)
+            else TraciWorld(self.cfg, gui=self.gui, vd_provider=provider,
+                            dynamic_routes=self.vd_dynamic_routes)
         self.world.reset()
         self.nodes = build_nodes(self.rsus)
         self.gen = TaskGenerator(arrival_rate=self.arrival_rate, seed=s,
@@ -783,6 +813,7 @@ class VECMultiEnv:
         self.twin_states = {}
         self.twin_observed_at = 0.0
         self.twin_age_s = 0.0
+        self._traffic_status = {"vd_mode": "off" if self.mock else self.vd_mode}
         self._ep += 1
         self._reset_stats()
 
@@ -844,6 +875,16 @@ class VECMultiEnv:
                 "avg_twin_age_s": (s["twin_age_sum"] / s["twin_age_n"])
                                   if s["twin_age_n"] else 0.0,
                 "max_twin_age_s": s["twin_age_max"],
+                "scenario": self.scenario if not self.mock else "mock",
+                "vd_mode": self._traffic_status.get("vd_mode", self.vd_mode),
+                "vd_source_time": self._traffic_status.get("vd_source_time"),
+                "avg_vd_data_age_s": (s["vd_age_sum"] / s["vd_age_n"])
+                                        if s["vd_age_n"] else 0.0,
+                "vd_updates": self._traffic_status.get("vd_updates", 0),
+                "vd_fetch_failures": self._traffic_status.get("vd_fetch_failures", 0),
+                "vd_injected": self._traffic_status.get("vd_injected", 0),
+                "vd_inject_failures": self._traffic_status.get("vd_inject_failures", 0),
+                "vd_total_vph": self._traffic_status.get("vd_total_vph", 0.0),
                 "deadline_miss": s["deadline_miss"], "infeasible": s["infeasible"],
                 "pred_reject": s["pred_reject"], "link_break": s["link_break"],
                 "break_recovered": s["break_recovered"],

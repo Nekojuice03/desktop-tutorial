@@ -267,6 +267,57 @@ env_ad.close()
 check("回合有實際處理任務(>200)", st["latency_n"] > 200, f"{st['latency_n']} 筆")
 env.close()
 
+print("\n=== [9] 和平東路場景與 VD 邊界流量 ===")
+import os as _os
+import xml.etree.ElementTree as _ET
+from scenario_config import (resolve_scenario as _resolve_scenario,
+                             model_suffix as _model_suffix,
+                             scenario_cli as _scenario_cli)
+from vd_provider import (load_mapping as _load_mapping,
+                         rates_from_snapshot as _rates_from_snapshot,
+                         _read_net_routes as _read_net_routes)
+_sc = _resolve_scenario("heping")
+_rows = _load_mapping(_sc.vd_mapping)
+_net_root = _ET.parse(_sc.net_file).getroot()
+_edge_ids = {e.get("id") for e in _net_root.findall("edge")
+             if e.get("id") and not e.get("function")}
+check("和平東路場景資產存在且 8/8 VD edge 有效",
+      _os.path.isfile(_sc.sumocfg) and _os.path.isfile(_sc.rsu_positions)
+      and len(_rows) == 8
+      and all(r["SumoEdgeID"] in _edge_ids for r in _rows))
+_section_xml = "<root>" + "".join(
+    f"<SectionData><SectionId>{did}</SectionId><TotalVol>{vol}</TotalVol>"
+    "<DataCollectTimeInterval>5</DataCollectTimeInterval></SectionData>"
+    for did, vol in (("ZFZK620", 100), ("ZF9KB40", 50),
+                     ("ZFYKD00", 40), ("ZFYKD40", 30))) + "</root>"
+_rates, _ = _rates_from_snapshot(_rows, _section_xml)
+check("Section VD 流量依 FlowShare 分配且不重複計數",
+      len(_rates) == 8 and np.isclose(sum(_rates), 1980.0))
+_device_xml = """<root><VDDevice><DeviceID>ZFZK620</DeviceID>
+<DataCollectTimeInterval>5</DataCollectTimeInterval><LaneData><LaneNO>0</LaneNO>
+<Svolume>100</Svolume></LaneData></VDDevice></root>"""
+_lane_rates, _ = _rates_from_snapshot(_rows, _device_xml)
+check("設備級 lane 流量也依 FlowShare 分配而不重複",
+      np.isclose(sum(_lane_rates), 1200.0))
+_z_rows = _load_mapping(_resolve_scenario("zhongxiao").vd_mapping)
+_z_device_xml = "<root><VDDevice><DeviceID>VJQJI20</DeviceID>" \
+    "<DataCollectTimeInterval>5</DataCollectTimeInterval>" + "".join(
+        f"<LaneData><LaneNO>{lane}</LaneNO><Svolume>100</Svolume></LaneData>"
+        for lane in range(6)) + "</VDDevice></root>"
+_z_lane_rates, _ = _rates_from_snapshot(_z_rows, _z_device_xml)
+check("設備級不同 lane 各自保留量測，不被 device 列數二次均分",
+      np.isclose(sum(_z_lane_rates), 7200.0))
+_routes = _read_net_routes(_sc.net_file, {r["SumoEdgeID"] for r in _rows})
+check("每個和平東路 VD 邊界 edge 都有可注入 SUMO route", len(_routes) == 8)
+check("場景/VD 模式納入 checkpoint 名稱，避免模型混用",
+      _model_suffix(scenario=_sc, vd_mode="replay", twin_quality=True)
+      == "_heping_replay_tq")
+_cli_sc, _cli_mode = _scenario_cli(
+    ["train_mappo.py", "--sumo", "--scenario", "heping", "--vd-mode", "replay"],
+    True)
+check("scenario CLI 同時接受 '--key value' 寫法",
+      _cli_sc.name == "heping" and _cli_mode == "replay")
+
 print("\n" + "=" * 60)
 fails = [n for n, ok, _ in RESULTS if not ok]
 print(f"共 {len(RESULTS)} 項檢查：{len(RESULTS)-len(fails)} PASS / {len(fails)} FAIL")

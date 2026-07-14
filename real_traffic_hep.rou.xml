@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <vType id="passenger" vClass="passenger"/>
+    <!-- archived VD source: VD_SECTION_20260714_122839.xml -->
+    <route id="vd_static_route_0" edges="1068183460#0 311995322#0"/>
+    <route id="vd_static_route_1" edges="1068183466#0 58976063#0 -312657745#12 298017958#0 53547406#3 53547406#4 53547406#5"/>
+    <route id="vd_static_route_2" edges="1466668326#0 58976063#0 -312657745#12 298017958#0 53547406#3 53547406#4 53547406#5"/>
+    <route id="vd_static_route_3" edges="205066812#6 53547406#0 53547406#3 53547406#4 53547406#5"/>
+    <route id="vd_static_route_4" edges="260789408#0"/>
+    <route id="vd_static_route_5" edges="297091618#0"/>
+    <route id="vd_static_route_6" edges="317526886#0 1068183484#0 58976063#0 -312657745#12 298017958#0 53547406#3 53547406#4 53547406#5"/>
+    <route id="vd_static_route_7" edges="58976063#4 205066812#6 53547406#0 53547406#3 53547406#4 53547406#5"/>
+    <flow id="vd_static_0" type="passenger" route="vd_static_route_3" begin="0" end="3600" vehsPerHour="92.25" departLane="best" departSpeed="max"/>
+    <flow id="vd_static_1" type="passenger" route="vd_static_route_7" begin="0" end="3600" vehsPerHour="92.25" departLane="best" departSpeed="max"/>
+    <flow id="vd_static_2" type="passenger" route="vd_static_route_4" begin="0" end="3600" vehsPerHour="92.25" departLane="best" departSpeed="max"/>
+    <flow id="vd_static_3" type="passenger" route="vd_static_route_2" begin="0" end="3600" vehsPerHour="92.25" departLane="best" departSpeed="max"/>
+    <flow id="vd_static_4" type="passenger" route="vd_static_route_5" begin="0" end="3600" vehsPerHour="675.00" departLane="best" departSpeed="max"/>
+    <flow id="vd_static_5" type="passenger" route="vd_static_route_1" begin="0" end="3600" vehsPerHour="243.00" departLane="best" departSpeed="max"/>
+    <flow id="vd_static_6" type="passenger" route="vd_static_route_6" begin="0" end="3600" vehsPerHour="130.50" departLane="best" departSpeed="max"/>
+    <flow id="vd_static_7" type="passenger" route="vd_static_route_0" begin="0" end="3600" vehsPerHour="130.50" departLane="best" departSpeed="max"/>
+</routes>

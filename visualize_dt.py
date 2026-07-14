@@ -31,6 +31,7 @@ from PIL import Image
 
 from vec_env_ma import VECMultiEnv, MA_ACTIONS, SCRIPT_DIR
 from infra_config import RSU_RANGE_M
+from scenario_config import resolve_scenario, env_scenario_kwargs, model_suffix
 
 # 決策連線配色：刻意避開車輛(藍/橘星)與 RSU(深藍)的顏色，確保 V2V 也清楚可見
 KIND_COLOR = {"v2v_strong": "#2e7d32", "v2v_near": "#00acc1",
@@ -158,11 +159,18 @@ def main():
     p.add_argument("--fps", type=int, default=8)
     p.add_argument("--priority", action="store_true")
     p.add_argument("--twin-quality", action="store_true")
+    p.add_argument("--scenario", default="heping")
+    p.add_argument("--cfg", default=None)
+    p.add_argument("--vd-mode", choices=("static", "replay", "live"),
+                   default="static")
     args = p.parse_args()
 
     if args.sumo:
         cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=args.ticks + 5)
+        scenario = resolve_scenario(args.scenario, args.cfg)
+        cfg.update(env_scenario_kwargs(scenario, args.vd_mode))
     else:
+        scenario = None
         cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                    episode_ticks=args.ticks + 5, task_cpu_scale=1.0)
     if args.priority:
@@ -172,7 +180,9 @@ def main():
     env = VECMultiEnv(**cfg, obs_delay=args.tau)
 
     algo = None
-    artifact_suffix = ("_prio" if args.priority else "") + ("_tq" if args.twin_quality else "")
+    artifact_suffix = model_suffix(priority=args.priority,
+                                   twin_quality=args.twin_quality,
+                                   scenario=scenario, vd_mode=args.vd_mode)
     mp = os.path.join(SCRIPT_DIR, f"mappo{artifact_suffix}_vec.pt")
     if os.path.exists(mp):
         from mappo import MAPPO
@@ -195,7 +205,7 @@ def main():
             import sumolib
             import xml.etree.ElementTree as ET
             net_file = None
-            cfg_path = os.path.join(SCRIPT_DIR, "osm.sumocfg")
+            cfg_path = scenario.sumocfg
             if os.path.exists(cfg_path):
                 nf = ET.parse(cfg_path).getroot().find(".//net-file")
                 if nf is not None:

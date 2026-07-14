@@ -185,6 +185,30 @@ cost = 運算量(cycles) × 每 cycle 單價     (cloud 2e-10 > rsu 5e-11 > loca
 - **回程**:固定傳播延遲 `CLOUD_EXTRA_LATENCY` + 有限頻寬 `BACKHAUL_CAPACITY_BPS`
   (共享 FIFO,會壅塞);若要改為「無限快」可把容量設極大、成本權重 `COST_W=0`。
 
+## 八、VD 邊界需求與重播協定
+
+和平東路的交通需求由 `vd_provider.py` 將台北市路段級 VD 五分鐘總量轉成
+SUMO 邊界流率。對 mapping 第 (j) 列：
+
+\[
+q_j=TotalVol_d\times\frac{60}{\Delta t_{min}}\times r_{passenger}\times s_j,
+\qquad \sum_{j\in d}s_j=1.
+\]
+
+目前 (r_{passenger}=0.75)；`FlowShare` 的群組總和會正規化為 1，避免同一 VD
+映射到鏡射或代理 edge 時把 `TotalVol` 重複計數。這是邊界需求同化，不把 VD
+位置誤稱為逐車軌跡重建；轉向與路線仍是模型假設。
+
+- `static`：單一封存快照產生固定 `rou.xml`，適合場景肉眼校對。
+- `replay`：依模擬時間每 300 秒換一筆快照，適合論文訓練與多 seed 比較。
+- `live`：依牆鐘時間每 300 秒更新，適合部署展示，不保證可重現。
+
+動態模式由 `TraciWorld` 在同一 TraCI session 加車，並用只含 `vType` 的動態
+route file 覆寫 `heping.sumocfg` 內的靜態需求，防止 double counting。每回合輸出
+VD mode、來源、更新數、抓取／注入失敗、注入車數、總 vph 與 ingestion age。
+由於目前官方 section feed 沒有可靠來源時間戳，`vd_data_age_s` 僅代表「程式接收
+快照後經過多久」，不得當成感測器到決策端的完整 AoI。
+
 ## 參考文獻
 - 3GPP TR 37.885, *Study on evaluation methodology of new V2X use cases for LTE and NR*（V2X 通道/路徑損耗模型）。
 - "Evaluating Link Lifetime Prediction to Support Computational Offloading Decision in VANETs," *Sensors* 22(16), 2022（連線壽命預測支援卸載決策；ML 預測降任務丟失 70–80%）。

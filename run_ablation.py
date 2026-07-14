@@ -24,6 +24,7 @@ import json
 import numpy as np
 
 from vec_env_ma import VECMultiEnv, SCRIPT_DIR
+from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
 
 # 預判器消融階梯：naive(linear) → 可部署(kalman，僅 BSM 觀測) → oracle(route，意圖分享)
 # 恢復軸：fail → v2i → v2i+arr(抵達補送：車主離場後結果經基礎設施補送至停靠處)
@@ -79,9 +80,11 @@ def main():
     use_sumo = "--sumo" in sys.argv
     priority = "--priority" in sys.argv
     twin_quality = "--twin-quality" in sys.argv
+    scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
     if use_sumo:
         base_cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300,
                         task_cpu_scale=1.0)
+        base_cfg.update(env_scenario_kwargs(scenario, vd_mode))
         episodes = 5
     else:
         base_cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24,
@@ -91,7 +94,8 @@ def main():
         base_cfg["priority_aware"] = True
     if twin_quality:
         base_cfg["twin_quality_aware"] = True
-    artifact_suffix = ("_prio" if priority else "") + ("_tq" if twin_quality else "")
+    artifact_suffix = model_suffix(priority=priority, twin_quality=twin_quality,
+                                   scenario=scenario, vd_mode=vd_mode)
 
     # 有訓練好的模型就加入 MAPPO 策略
     policies = ["greedy", "random"]
@@ -139,7 +143,7 @@ def main():
                   f"{r['consumer_left']:6d}{r['arrival_delivered']:5d}"
                   f"{r['rsu_handover']:5d}")
 
-    out = os.path.join(SCRIPT_DIR, "ablation_results.json")
+    out = os.path.join(SCRIPT_DIR, f"ablation_results{artifact_suffix}.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\n數據已存 {out}")
@@ -173,7 +177,7 @@ def main():
         axes[1].set_title("Mobility events by mechanism")
         axes[1].legend()
         plt.tight_layout()
-        fp = os.path.join(SCRIPT_DIR, "fig_ablation.png")
+        fp = os.path.join(SCRIPT_DIR, f"fig_ablation{artifact_suffix}.png")
         plt.savefig(fp, dpi=150); plt.close()
         print(f"已產生 {fp}")
 

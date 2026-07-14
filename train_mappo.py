@@ -22,6 +22,7 @@ import torch
 
 from vec_env_ma import VECMultiEnv, MA_ACTIONS as ACTIONS, SCRIPT_DIR
 from mappo import MAPPO
+from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
 
 ROLLOUT_TICKS = 512   # 每次更新前收集幾個 tick
 ITERATIONS = 200      # 更新幾次(輪數多→後期在高點附近飽和，呈上升→平台趨勢)
@@ -122,10 +123,12 @@ def main():
     set_global_seed(seed)
     use_sumo = "--sumo" in sys.argv
     gui = "--gui" in sys.argv
+    scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
 
     if use_sumo:
         cfg = dict(mock=False, gui=gui, arrival_rate=0.3, episode_ticks=300,
                    task_cpu_scale=1.0)
+        cfg.update(env_scenario_kwargs(scenario, vd_mode))
     else:
         # mock 異質算力情境：任務已在 TASK_PROFILES 裡分輕(sensor)/重(vision)，
         # 高密度 + 強車 35% → 逼出 V2V(找強車) 與多層分工
@@ -145,9 +148,9 @@ def main():
     algo_name = ("LocalCriticPPO" if local_critic else "MAPPO")
     algo_name += ("+priority" if priority else "")
     algo_name += ("+twin-quality" if twin_quality else "")
-    suffix = ("_localcritic" if local_critic else "")
-    suffix += ("_prio" if priority else "")
-    suffix += ("_tq" if twin_quality else "")
+    suffix = model_suffix(local_critic=local_critic, priority=priority,
+                          twin_quality=twin_quality, scenario=scenario,
+                          vd_mode=vd_mode)
     model_out = f"mappo{suffix}_vec.pt" if suffix else "mappo_vec.pt"
     log_name = f"mappo_train_log{suffix}.csv" if suffix else "mappo_train_log.csv"
 
@@ -215,6 +218,8 @@ def main():
         "sumo": use_sumo,
         "priority_aware": priority,
         "twin_quality_aware": twin_quality,
+        "scenario": scenario.name if scenario else "mock",
+        "vd_mode": vd_mode,
         "actions": list(ACTIONS),
     })
     print(f"\n模型已存成 {model_out}")

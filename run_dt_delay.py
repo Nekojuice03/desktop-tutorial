@@ -23,12 +23,13 @@ import json
 
 from vec_env_ma import VECMultiEnv, SCRIPT_DIR
 from run_ablation import run_episodes, EVENT_KEYS
+from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
 
 TAUS = [0, 1, 2, 4, 8]                 # 孿生延遲(秒)
 PREDICTORS = ["linear", "kalman"]      # route 為 oracle(不受 BSM 延遲影響)，不掃
 
 
-def plot_results(results, pol, tag):
+def plot_results(results, pol, tag, artifact_suffix=""):
     """三面板：成功率 / 執行期斷線 / 預判誤殺(對數) —— 誤殺才是劣化機制的主圖。"""
     import matplotlib
     matplotlib.use("Agg")
@@ -56,27 +57,31 @@ def plot_results(results, pol, tag):
     for ax in axes:
         ax.grid(alpha=0.3); ax.legend()
     plt.tight_layout()
-    fp = os.path.join(SCRIPT_DIR, "fig_dt_delay.png")
+    fp = os.path.join(SCRIPT_DIR, f"fig_dt_delay{artifact_suffix}.png")
     plt.savefig(fp, dpi=150); plt.close()
     print(f"已產生 {fp}")
 
 
 def main():
-    # --replot：不重跑模擬，直接用既有 dt_delay_results.json 重繪(補圖用)
-    if "--replot" in sys.argv:
-        out = os.path.join(SCRIPT_DIR, "dt_delay_results.json")
-        results = json.load(open(out, encoding="utf-8"))
-        pol = "mappo" if any(k.startswith("mappo/") for k in results) else "greedy"
-        tag = "SUMO" if "--sumo" in sys.argv else "mock"
-        plot_results(results, pol, tag)
-        return
-
     use_sumo = "--sumo" in sys.argv
     priority = "--priority" in sys.argv
     twin_quality = "--twin-quality" in sys.argv
+    scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
+    artifact_suffix = model_suffix(priority=priority, twin_quality=twin_quality,
+                                   scenario=scenario, vd_mode=vd_mode)
+    # --replot：不重跑模擬，直接用既有 dt_delay_results.json 重繪(補圖用)
+    if "--replot" in sys.argv:
+        out = os.path.join(SCRIPT_DIR, f"dt_delay_results{artifact_suffix}.json")
+        results = json.load(open(out, encoding="utf-8"))
+        pol = "mappo" if any(k.startswith("mappo/") for k in results) else "greedy"
+        tag = "SUMO" if use_sumo else "mock"
+        plot_results(results, pol, tag, artifact_suffix)
+        return
+
     if use_sumo:
         base_cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300,
                         task_cpu_scale=1.0)
+        base_cfg.update(env_scenario_kwargs(scenario, vd_mode))
         episodes = 5
     else:
         base_cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24,
@@ -86,7 +91,6 @@ def main():
         base_cfg["priority_aware"] = True
     if twin_quality:
         base_cfg["twin_quality_aware"] = True
-    artifact_suffix = ("_prio" if priority else "") + ("_tq" if twin_quality else "")
 
     policies = ["greedy"]
     algo = None
@@ -123,13 +127,14 @@ def main():
                       f"{r['latency']:8.0f}{r['pred_reject']:7d}{r['link_break']:5d}"
                       f"{r['break_recovered']:5d}{r['break_failed']:5d}")
 
-    out = os.path.join(SCRIPT_DIR, "dt_delay_results.json")
+    out = os.path.join(SCRIPT_DIR, f"dt_delay_results{artifact_suffix}.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\n數據已存 {out}")
 
     if "--plot" in sys.argv:
-        plot_results(results, "mappo" if "mappo" in policies else "greedy", tag)
+        plot_results(results, "mappo" if "mappo" in policies else "greedy", tag,
+                     artifact_suffix)
 
 
 if __name__ == "__main__":

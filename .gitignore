@@ -1,4 +1,5 @@
 # Python
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -6,15 +7,18 @@ __pycache__/
 # 訓練產物
 *.pt
 dqn_vec.zip
-mappo_train_log.csv
-compare_results.json
-ablation_results.json
+mappo_train_log*.csv
+compare_results*.json
+ablation_results*.json
+load_sweep_results*.json
+dt_delay_results*.json
 # 比較圖(由 compare_and_plot.py 重新生成)
 fig_*.png
 
 # SUMO 執行輸出
-tripinfos.xml
-stats.xml
+tripinfos*.xml
+stats*.xml
+traffic_data/*/VD_SECTION_*.xml
 edgeData.xml
 dt_states.jsonl
 cal_*_output.xml
@@ -22,10 +26,10 @@ cal_*_output.xml
 # Claude 本地設定(個人權限，不入庫)
 .claude/settings.local.json
 rsu_layout.png
+rsu_positions.backup.json
 vd_debug.add.xml
 real_traffic_hep.rou.xml
 seeds_results.json
-dt_delay_results.json
 mappo_train_log_ippo.csv
 dt_visualization.gif
 dt_snapshot.png

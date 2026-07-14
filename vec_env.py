@@ -68,9 +68,11 @@ def _clip01(v):
 # ==================================================================
 class TraciWorld:
     """用 TraCI 連真實 SUMO。"""
-    def __init__(self, cfg, gui=False):
+    def __init__(self, cfg, gui=False, vd_provider=None, dynamic_routes=None):
         self.cfg = cfg
         self.gui = gui
+        self.vd_provider = vd_provider
+        self.dynamic_routes = dynamic_routes
         self.dt = 1.0
         self.done = False
         self._t = None
@@ -82,20 +84,40 @@ class TraciWorld:
         if traci.isLoaded():
             traci.close()
         sumo_bin = checkBinary("sumo-gui" if self.gui else "sumo")
-        traci.start([sumo_bin, "-c", self.cfg, "--start", "--quit-on-end"])
+        cmd = [sumo_bin, "-c", self.cfg, "--start", "--quit-on-end"]
+        if self.vd_provider is not None and self.dynamic_routes:
+            # Dynamic VD injection must not be added on top of the static flow
+            # file in the scenario cfg, otherwise demand is counted twice.
+            cmd.extend(["--route-files", self.dynamic_routes])
+        traci.start(cmd)
         self.dt = traci.simulation.getDeltaT()
         self.done = False
+        if self.vd_provider is not None:
+            self.vd_provider.attach(traci)
 
     def step(self):
         t = self._t
+        if self.vd_provider is not None:
+            self.vd_provider.before_step(t, t.simulation.getTime(), self.dt)
         t.simulationStep()
         now = t.simulation.getTime()
         ids = t.vehicle.getIDList()
         states = {vid: {"pos": t.vehicle.getPosition(vid),
                         "speed": t.vehicle.getSpeed(vid),
                         "angle": t.vehicle.getAngle(vid)} for vid in ids}
-        self.done = t.simulation.getMinExpectedNumber() <= 0
+        # A dynamic provider can create future demand even when the road is
+        # momentarily empty.  The RL episode tick limit owns termination.
+        self.done = (t.simulation.getMinExpectedNumber() <= 0
+                     and self.vd_provider is None)
         return now, states
+
+    def traffic_status(self):
+        return self.vd_provider.status() if self.vd_provider is not None else {
+            "vd_mode": "static", "vd_source_time": None,
+            "vd_data_age_s": 0.0, "vd_updates": 0,
+            "vd_fetch_failures": 0, "vd_injected": 0,
+            "vd_inject_failures": 0, "vd_total_vph": 0.0,
+        }
 
     def _route_exit_time(self, vid):
         """

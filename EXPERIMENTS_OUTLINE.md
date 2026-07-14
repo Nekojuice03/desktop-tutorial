@@ -8,10 +8,11 @@
 ## 5.1 實驗設定
 
 **內容**:場景(和平東路二段/新生南路,876×867m,3 號誌路口,8 RSU:3路口×2角+路肩2,覆蓋92%)、
-真實車流(台北交控 VD 路段級 TotalVol × 全市小客車比例 0.73,僅小型客車)、
+真實車流(台北交控 VD 路段級 TotalVol × 小客車代理比例 0.75,僅小型客車)、
 參數表(引 PROGRESS.md §3)、對照組(Local/RSU/Cloud-only、Random、Greedy)、
 指標(成功率、vision-only、延遲、能耗、成本、移動性事件)、
-訓練協定(150 iter、LR 線性衰減、固定 EVAL_SEEDS、n=3 seeds)。
+訓練協定(replay 快照資料集、150 iter、LR 線性衰減、固定 EVAL_SEEDS、n=3 seeds)。
+三個號誌採固定時制，號誌控制不是本研究的學習變數。
 
 **圖**:`rsu_layout.png`(RSU 佈點)、README 架構圖。
 **必寫的假設聲明**(§8 of PROGRESS):無線無競爭(SNR 非 SINR)、任務原子、

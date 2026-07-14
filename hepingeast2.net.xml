@@ -523,19 +523,19 @@
         <lane id="58976063#8_3" index="3" disallow="tram rail_urban rail rail_electric rail_fast ship container cable_car subway aircraft wheelchair scooter drone" speed="27.78" length="318.27" shape="316.28,461.42 285.28,464.40 277.03,465.28 256.54,467.29 172.14,475.59 164.84,476.43 152.47,477.51 117.40,481.01 80.45,484.70 8.52,491.53 -0.53,492.54"/>
     </edge>
 
-    <tlLogic id="cluster_3084846851_661201275" type="actuated" programID="0" offset="0">
+    <tlLogic id="cluster_3084846851_661201275" type="static" programID="0" offset="0">
         <phase duration="39" state="rrrrrGGGGGgGGGGgg" minDur="13" maxDur="50"/>
         <phase duration="6"  state="rrrrrGyyyyyyyyyyy"/>
         <phase duration="39" state="GGGGgGrrrrrrrrrrr" minDur="5" maxDur="50"/>
         <phase duration="6"  state="yyyyyGrrrrrrrrrrr"/>
     </tlLogic>
-    <tlLogic id="cluster_3084846852_676496197" type="actuated" programID="0" offset="0">
+    <tlLogic id="cluster_3084846852_676496197" type="static" programID="0" offset="0">
         <phase duration="39" state="GGGGggrrrrrGGGGGg" minDur="13" maxDur="50"/>
         <phase duration="6"  state="yyyyyyrrrrrGyyyyy"/>
         <phase duration="39" state="rrrrrrGGGGgGrrrrr" minDur="5" maxDur="50"/>
         <phase duration="6"  state="rrrrrryyyyyGrrrrr"/>
     </tlLogic>
-    <tlLogic id="cluster_4007684916_632259238_632259388_632259392" type="actuated" programID="0" offset="0">
+    <tlLogic id="cluster_4007684916_632259238_632259388_632259392" type="static" programID="0" offset="0">
         <phase duration="16" state="GGGGrrrrrrrrrGGGGGrrrrrrrrrrrr" minDur="13" maxDur="50"/>
         <phase duration="6"  state="yyyyrrrrrrrrryyyyyrrrrrrrrrrrr"/>
         <phase duration="6"  state="rrrrGGrrrrrrrrrrrrGGrrrrrrrrrr" minDur="13" maxDur="50"/>

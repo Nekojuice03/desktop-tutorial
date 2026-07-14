@@ -90,7 +90,7 @@ GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick �
 | 多指標訓練 | vision-only 成功率、成本欄、LR 衰減、成本對照圖 | `35faf07` |
 | **移動性閉環** | 事件驅動結算 + route 預判 + V2I 遷移恢復 + 離場處理(優雅退場/consumer_left) | `43c67d1` `d20b31c` |
 | **卡曼預判** | EKF-CTRV(僅 BSM 觀測)三級預判階梯 linear/kalman/route | `09c5c72` |
-| 驗證/消融 | verify_invariants 25 項、run_ablation 3×2 | `79e7ac5` `bba119a` |
+| 驗證/消融 | verify_invariants 42 項、run_ablation 3×2 | `79e7ac5` `bba119a` |
 | 對稱化 | RSU/雲也事件驅動(換手 rsu_handover)、sweep_params 修復 | `bba119a` |
 | **和平東路場景** | 路網(hepingeast2)、junction RSU 佈點(3路口×2角+路肩=8)、build_net/build_scenario | `61c4d9f` `e217daa` `f1c97a0` |
 | **真實車流管線** | make_real_flow：台北 VD(路段/設備雙模式)→僅小客車 flow、自動對應+校對+去重 | `395a9b9`…`e2a9960` |
@@ -123,6 +123,12 @@ GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick �
 
 ## 5. ⚠️ 重要狀態
 
+- **和平東路整合已完成**：`heping.sumocfg` 固定搭配 8 RSU 與情境專屬 VD mapping；
+  `static/replay/live` 三模式已由同一 TraCI session 驗證。正式研究使用 replay，
+  live 僅作展示；模型與結果皆帶 scenario/VD-mode 後綴，防止跨場景污染。
+- 已封存兩筆 2026-07-14 官方 section-level VD 快照，短測需求約
+  1530–1548 veh/h。這只能驗證管線，正式時間變化實驗仍需每五分鐘收集多日資料。
+
 - **既有 `mappo_vec.pt` / `dqn_vec.zip` 已作廢**：觀測維度改變(11→12、17→18)，
   載入會 shape 報錯 → **必須重新訓練**。
 - 完整模擬需在**裝好 SUMO + traci + stable-baselines3 + gymnasium** 的環境執行。
@@ -132,14 +138,15 @@ GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick �
 
 ## 6. 下一步（建議順序）
 
-1. **和平東路真實車流跑通**：`make_real_flow.py --remap` → sumo-gui 校對
-   VD 方向(vd_debug 粉紅點) → 確認和平東路兩向覆蓋(缺向可鏡射假設)。
+1. **擴充和平東路 replay 資料集**：
+   `python collect_vd.py --scenario heping --count 0 --interval 300`，至少涵蓋平峰、
+   尖峰與不同日期；保留原始 XML，不用 live 模式取代可重現的正式訓練。
 2. **正式重訓與評估**（和平東路 + 真實小客車流）：
    ```
-   python verify_invariants.py            # 25 項全 PASS
-   python train_mappo.py --sumo
-   python compare_and_plot.py --sumo
-   python run_ablation.py --sumo --plot   # 3 預判 × 2 恢復消融
+   python verify_invariants.py            # 42 項全 PASS
+   python train_mappo.py --sumo --scenario=heping --vd-mode=replay --twin-quality
+   python compare_and_plot.py --sumo --scenario=heping --vd-mode=replay --twin-quality
+   python run_ablation.py --sumo --scenario=heping --vd-mode=replay --twin-quality --plot
    ```
    驗收：kalman 的 link_break 介於 linear 與 route 之間、v2i 救回率高、
    rsu_handover 在長路上出現、MAPPO 能耗/成本顯著低於 Greedy。

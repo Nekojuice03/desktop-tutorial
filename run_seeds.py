@@ -20,6 +20,7 @@ from vec_env_ma import VECMultiEnv
 from mappo import MAPPO
 from train_mappo import (collect, evaluate, set_global_seed,
                          ROLLOUT_TICKS, ITERATIONS)
+from scenario_config import resolve_scenario, env_scenario_kwargs
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 METRICS = ("sr", "vis", "lat", "en", "cost")
@@ -54,12 +55,19 @@ def main():
     p.add_argument("--sumo", action="store_true")
     p.add_argument("--priority", action="store_true")
     p.add_argument("--twin-quality", action="store_true")
+    p.add_argument("--scenario", default="heping")
+    p.add_argument("--cfg", default=None)
+    p.add_argument("--vd-mode", choices=("static", "replay", "live"),
+                   default="replay")
     args = p.parse_args()
 
     if args.sumo:
         cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300, task_cpu_scale=1.0)
+        scenario = resolve_scenario(args.scenario, args.cfg)
+        cfg.update(env_scenario_kwargs(scenario, args.vd_mode))
         iters = args.iters or 150
     else:
+        scenario = None
         cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                    episode_ticks=150, task_cpu_scale=1.0)
         iters = args.iters or ITERATIONS
@@ -92,6 +100,8 @@ def main():
     payload = {"algo": name, "seeds": args.seeds, "iters": iters,
                "sumo": args.sumo, "priority_aware": args.priority,
                "twin_quality_aware": args.twin_quality,
+               "scenario": scenario.name if scenario else "mock",
+               "vd_mode": args.vd_mode if args.sumo else "off",
                "runs": runs, "summary": summary}
     # 若已有另一演算法的結果，合併保存方便對照
     if os.path.exists(out):
@@ -100,7 +110,12 @@ def main():
             old = old if isinstance(old, list) else [old]
         except Exception:
             old = []
-        old = [o for o in old if o.get("algo") != name]
+        identity = (name, payload["scenario"], payload["vd_mode"],
+                    payload["priority_aware"], payload["twin_quality_aware"])
+        old = [o for o in old if (
+            o.get("algo"), o.get("scenario", "mock"), o.get("vd_mode", "off"),
+            o.get("priority_aware", False), o.get("twin_quality_aware", False)
+        ) != identity]
         old.append(payload)
         payload = old
     else:
