@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 
 
 LIVE_SECTION_URL = "https://tcgbusfs.blob.core.windows.net/blobtisv/GetVD.xml.gz"
+REPLAY_SPLITS = ("all", "train", "validation", "test")
 
 
 def _local(tag: str) -> str:
@@ -158,10 +159,36 @@ def _read_net_routes(path: str, sources: set[str]) -> dict[str, list[str]]:
     return result
 
 
+def select_replay_files(files: list[str], split: str) -> list[str]:
+    """Chronologically partition archived snapshots without data leakage."""
+    split = "validation" if split == "val" else split
+    if split not in REPLAY_SPLITS:
+        raise ValueError(f"replay split must be one of {REPLAY_SPLITS}")
+    files = sorted(files)
+    if split == "all":
+        return files
+    if len(files) < 3:
+        raise ValueError(
+            f"VD split {split!r} needs at least 3 snapshots; found {len(files)}")
+    n = len(files)
+    n_train = max(1, int(n * 0.70))
+    n_val = max(1, int(n * 0.15))
+    if n_train + n_val >= n:
+        n_train, n_val = max(1, n - 2), 1
+    bounds = {
+        "train": (0, n_train),
+        "validation": (n_train, n_train + n_val),
+        "test": (n_train + n_val, n),
+    }
+    lo, hi = bounds[split]
+    return files[lo:hi]
+
+
 class VDTrafficProvider:
     def __init__(self, mode: str, mapping_path: str, data_dir: str,
                  net_file: str, update_interval: float = 300.0,
-                 live_url: str = LIVE_SECTION_URL):
+                 live_url: str = LIVE_SECTION_URL,
+                 replay_split: str = "all", replay_episode: int = 0):
         if mode not in {"replay", "live"}:
             raise ValueError("VDTrafficProvider mode must be replay or live")
         self.mode = mode
@@ -170,6 +197,8 @@ class VDTrafficProvider:
         self.net_file = net_file
         self.update_interval = float(update_interval)
         self.live_url = live_url
+        self.replay_split = "validation" if replay_split == "val" else replay_split
+        self.replay_episode = int(replay_episode)
         self.rows = load_mapping(mapping_path)
         self.routes = _read_net_routes(net_file,
                                        {r["SumoEdgeID"] for r in self.rows})
@@ -208,13 +237,18 @@ class VDTrafficProvider:
                 pass
         if self.mode == "replay":
             os.makedirs(self.data_dir, exist_ok=True)
-            self.replay_files = sorted(
+            all_files = sorted(
                 os.path.join(self.data_dir, name) for name in os.listdir(self.data_dir)
                 if name.lower().endswith(".xml")
             )
+            self.replay_files = select_replay_files(all_files, self.replay_split)
             if not self.replay_files:
                 raise FileNotFoundError(
                     f"no replay VD snapshots in {self.data_dir}; run collect_vd.py first")
+            # One 300-second episode represents one five-minute VD aggregate.
+            # Rotate the starting snapshot across resets so training uses the
+            # whole selected partition instead of always replaying file zero.
+            self.replay_index = self.replay_episode % len(self.replay_files) - 1
             self._advance_replay()
             self.next_sim_update = self.update_interval
         else:
@@ -296,6 +330,7 @@ class VDTrafficProvider:
     def status(self) -> dict:
         return {
             "vd_mode": self.mode,
+            "vd_split": self.replay_split if self.mode == "replay" else "live",
             "vd_source_time": self.source_time,
             "vd_data_age_s": float(self.data_age_s),
             "vd_updates": self.update_count,
@@ -303,4 +338,6 @@ class VDTrafficProvider:
             "vd_injected": self.injected,
             "vd_inject_failures": self.inject_failures,
             "vd_total_vph": float(sum(self.rates)),
+            "vd_snapshot_count": len(self.replay_files),
+            "vd_snapshot_index": self.replay_index if self.mode == "replay" else None,
         }

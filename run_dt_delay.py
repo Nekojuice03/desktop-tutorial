@@ -23,7 +23,8 @@ import json
 
 from vec_env_ma import VECMultiEnv, SCRIPT_DIR
 from run_ablation import run_episodes, EVENT_KEYS
-from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
+from scenario_config import (scenario_cli, vd_split_cli,
+                             env_scenario_kwargs, model_suffix)
 
 TAUS = [0, 1, 2, 4, 8]                 # 孿生延遲(秒)
 PREDICTORS = ["linear", "kalman"]      # route 為 oracle(不受 BSM 延遲影響)，不掃
@@ -67,6 +68,7 @@ def main():
     priority = "--priority" in sys.argv
     twin_quality = "--twin-quality" in sys.argv
     scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
+    vd_split = vd_split_cli(sys.argv, use_sumo, vd_mode, default="test")
     artifact_suffix = model_suffix(priority=priority, twin_quality=twin_quality,
                                    scenario=scenario, vd_mode=vd_mode)
     # --replot：不重跑模擬，直接用既有 dt_delay_results.json 重繪(補圖用)
@@ -81,7 +83,7 @@ def main():
     if use_sumo:
         base_cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300,
                         task_cpu_scale=1.0)
-        base_cfg.update(env_scenario_kwargs(scenario, vd_mode))
+        base_cfg.update(env_scenario_kwargs(scenario, vd_mode, vd_split))
         episodes = 5
     else:
         base_cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24,

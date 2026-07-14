@@ -163,12 +163,16 @@ def main():
     p.add_argument("--cfg", default=None)
     p.add_argument("--vd-mode", choices=("static", "replay", "live"),
                    default="static")
+    p.add_argument("--vd-split", choices=("all", "train", "validation", "test"),
+                   default="test")
     args = p.parse_args()
 
     if args.sumo:
         cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=args.ticks + 5)
         scenario = resolve_scenario(args.scenario, args.cfg)
-        cfg.update(env_scenario_kwargs(scenario, args.vd_mode))
+        cfg.update(env_scenario_kwargs(
+            scenario, args.vd_mode,
+            args.vd_split if args.vd_mode == "replay" else "all"))
     else:
         scenario = None
         cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,

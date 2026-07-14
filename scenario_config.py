@@ -87,6 +87,18 @@ def scenario_cli(argv: Iterable[str], use_sumo: bool) -> tuple[Optional[Scenario
     return resolve_scenario(name, cfg), mode
 
 
+def vd_split_cli(argv: Iterable[str], use_sumo: bool, vd_mode: str,
+                 default: str = "all") -> str:
+    """Parse the chronological replay partition selected by an experiment."""
+    if not use_sumo or vd_mode != "replay":
+        return "all"
+    split = (cli_value(argv, "--vd-split", default) or default).lower()
+    split = "validation" if split == "val" else split
+    if split not in {"all", "train", "validation", "test"}:
+        raise ValueError("--vd-split must be all, train, validation, or test")
+    return split
+
+
 def model_suffix(*, local_critic: bool = False, priority: bool = False,
                  twin_quality: bool = False, scenario: Optional[Scenario] = None,
                  vd_mode: str = "static") -> str:
@@ -99,7 +111,8 @@ def model_suffix(*, local_critic: bool = False, priority: bool = False,
     return suffix
 
 
-def env_scenario_kwargs(scenario: Optional[Scenario], vd_mode: str = "off") -> dict:
+def env_scenario_kwargs(scenario: Optional[Scenario], vd_mode: str = "off",
+                        vd_split: str = "all") -> dict:
     if scenario is None:
         return {}
     return {
@@ -107,6 +120,7 @@ def env_scenario_kwargs(scenario: Optional[Scenario], vd_mode: str = "off") -> d
         "cfg": scenario.sumocfg,
         "rsu_path": scenario.rsu_positions,
         "vd_mode": vd_mode,
+        "vd_split": vd_split,
         "vd_mapping": scenario.vd_mapping,
         "vd_data_dir": scenario.vd_data_dir,
         "vd_net_file": scenario.net_file,

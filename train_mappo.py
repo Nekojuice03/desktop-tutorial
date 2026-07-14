@@ -22,7 +22,8 @@ import torch
 
 from vec_env_ma import VECMultiEnv, MA_ACTIONS as ACTIONS, SCRIPT_DIR
 from mappo import MAPPO
-from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
+from scenario_config import (scenario_cli, vd_split_cli, cli_value,
+                             env_scenario_kwargs, model_suffix)
 
 ROLLOUT_TICKS = 512   # 每次更新前收集幾個 tick
 ITERATIONS = 200      # 更新幾次(輪數多→後期在高點附近飽和，呈上升→平台趨勢)
@@ -124,11 +125,21 @@ def main():
     use_sumo = "--sumo" in sys.argv
     gui = "--gui" in sys.argv
     scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
+    vd_split = vd_split_cli(sys.argv, use_sumo, vd_mode, default="train")
+    eval_vd_split = "all"
+    if use_sumo and vd_mode == "replay":
+        eval_vd_split = (cli_value(
+            sys.argv, "--vd-eval-split",
+            "validation" if vd_split == "train" else vd_split) or "validation").lower()
+        eval_vd_split = "validation" if eval_vd_split == "val" else eval_vd_split
+        if eval_vd_split not in {"all", "train", "validation", "test"}:
+            raise ValueError(
+                "--vd-eval-split must be all, train, validation, or test")
 
     if use_sumo:
         cfg = dict(mock=False, gui=gui, arrival_rate=0.3, episode_ticks=300,
                    task_cpu_scale=1.0)
-        cfg.update(env_scenario_kwargs(scenario, vd_mode))
+        cfg.update(env_scenario_kwargs(scenario, vd_mode, vd_split))
     else:
         # mock 異質算力情境：任務已在 TASK_PROFILES 裡分輕(sensor)/重(vision)，
         # 高密度 + 強車 35% → 逼出 V2V(找強車) 與多層分工
@@ -155,12 +166,16 @@ def main():
     log_name = f"mappo_train_log{suffix}.csv" if suffix else "mappo_train_log.csv"
 
     env = VECMultiEnv(**cfg)
-    # 獨立的評估環境(同設定，但種子由 EVAL_SEEDS 固定，與訓練環境互不干擾)
-    eval_env = VECMultiEnv(**cfg)
+    # 評估使用獨立 TraCI connection 與時間上未洩漏的 validation partition。
+    eval_cfg = dict(cfg)
+    eval_cfg["vd_split"] = eval_vd_split
+    eval_env = VECMultiEnv(**eval_cfg)
     algo = MAPPO(obs_dim=env.n_features, state_dim=env.state_dim,
                  n_actions=env.n_actions, central_critic=not local_critic)
     print(f"演算法：{algo_name}｜訓練環境：{'SUMO' if use_sumo else 'mock 壓力情境'}，"
           f"觀測{env.n_features} 全域狀態{env.state_dim} 動作{ACTIONS}\n")
+    if use_sumo and vd_mode == "replay":
+        print(f"VD replay：train={vd_split}｜evaluation={eval_vd_split}\n")
 
     print("訓練前(未學習)評估：")
     m0 = evaluate(eval_env, algo)
@@ -220,6 +235,8 @@ def main():
         "twin_quality_aware": twin_quality,
         "scenario": scenario.name if scenario else "mock",
         "vd_mode": vd_mode,
+        "vd_split": vd_split,
+        "vd_eval_split": eval_vd_split,
         "actions": list(ACTIONS),
     })
     print(f"\n模型已存成 {model_out}")

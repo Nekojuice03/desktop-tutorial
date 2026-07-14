@@ -19,6 +19,7 @@
 """
 import os
 import random
+from itertools import count
 import numpy as np
 try:
     import gymnasium as gym
@@ -68,6 +69,8 @@ def _clip01(v):
 # ==================================================================
 class TraciWorld:
     """用 TraCI 連真實 SUMO。"""
+    _labels = count()
+
     def __init__(self, cfg, gui=False, vd_provider=None, dynamic_routes=None):
         self.cfg = cfg
         self.gui = gui
@@ -76,24 +79,26 @@ class TraciWorld:
         self.dt = 1.0
         self.done = False
         self._t = None
+        self.label = f"vec_{next(self._labels)}"
 
     def reset(self):
         import traci
         from sumolib import checkBinary
-        self._t = traci
-        if traci.isLoaded():
-            traci.close()
         sumo_bin = checkBinary("sumo-gui" if self.gui else "sumo")
         cmd = [sumo_bin, "-c", self.cfg, "--start", "--quit-on-end"]
         if self.vd_provider is not None and self.dynamic_routes:
             # Dynamic VD injection must not be added on top of the static flow
             # file in the scenario cfg, otherwise demand is counted twice.
             cmd.extend(["--route-files", self.dynamic_routes])
-        traci.start(cmd)
-        self.dt = traci.simulation.getDeltaT()
+        # Training and periodic evaluation need independent SUMO processes.
+        # The module-level default connection made evaluation silently replace
+        # the training world every EVAL_EVERY iterations.
+        traci.start(cmd, label=self.label, doSwitch=False)
+        self._t = traci.getConnection(self.label)
+        self.dt = self._t.simulation.getDeltaT()
         self.done = False
         if self.vd_provider is not None:
-            self.vd_provider.attach(traci)
+            self.vd_provider.attach(self._t)
 
     def step(self):
         t = self._t
@@ -191,10 +196,12 @@ class TraciWorld:
 
     def close(self):
         try:
-            if self._t is not None and self._t.isLoaded():
+            if self._t is not None:
                 self._t.close()
         except Exception:
             pass
+        finally:
+            self._t = None
 
 
 class MockWorld:

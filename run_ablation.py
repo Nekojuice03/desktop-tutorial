@@ -24,7 +24,8 @@ import json
 import numpy as np
 
 from vec_env_ma import VECMultiEnv, SCRIPT_DIR
-from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
+from scenario_config import (scenario_cli, vd_split_cli,
+                             env_scenario_kwargs, model_suffix)
 
 # 預判器消融階梯：naive(linear) → 可部署(kalman，僅 BSM 觀測) → oracle(route，意圖分享)
 # 恢復軸：fail → v2i → v2i+arr(抵達補送：車主離場後結果經基礎設施補送至停靠處)
@@ -81,10 +82,11 @@ def main():
     priority = "--priority" in sys.argv
     twin_quality = "--twin-quality" in sys.argv
     scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
+    vd_split = vd_split_cli(sys.argv, use_sumo, vd_mode, default="test")
     if use_sumo:
         base_cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300,
                         task_cpu_scale=1.0)
-        base_cfg.update(env_scenario_kwargs(scenario, vd_mode))
+        base_cfg.update(env_scenario_kwargs(scenario, vd_mode, vd_split))
         episodes = 5
     else:
         base_cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24,

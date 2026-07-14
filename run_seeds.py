@@ -28,10 +28,10 @@ LABELS = {"sr": "成功率%", "vis": "vision%", "lat": "延遲ms",
           "en": "能耗J", "cost": "成本"}
 
 
-def train_one(cfg, seed, iters, local_critic):
+def train_one(cfg, eval_cfg, seed, iters, local_critic):
     set_global_seed(seed)
     env = VECMultiEnv(**cfg, seed=1000 * seed)   # 各 seed 訓練情境不同
-    eval_env = VECMultiEnv(**cfg)                # 評估用固定 EVAL_SEEDS → 跨 seed 公平
+    eval_env = VECMultiEnv(**eval_cfg)           # validation + 固定 seeds → 跨 seed 公平
     algo = MAPPO(obs_dim=env.n_features, state_dim=env.state_dim,
                  n_actions=env.n_actions, central_critic=not local_critic)
     carry = env.reset()
@@ -59,22 +59,35 @@ def main():
     p.add_argument("--cfg", default=None)
     p.add_argument("--vd-mode", choices=("static", "replay", "live"),
                    default="replay")
+    p.add_argument("--vd-split", choices=("all", "train", "validation", "test"),
+                   default="train")
+    p.add_argument("--vd-eval-split",
+                   choices=("all", "train", "validation", "test"),
+                   default="validation")
     args = p.parse_args()
 
     if args.sumo:
         cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300, task_cpu_scale=1.0)
         scenario = resolve_scenario(args.scenario, args.cfg)
-        cfg.update(env_scenario_kwargs(scenario, args.vd_mode))
+        cfg.update(env_scenario_kwargs(
+            scenario, args.vd_mode,
+            args.vd_split if args.vd_mode == "replay" else "all"))
+        eval_cfg = dict(cfg)
+        eval_cfg["vd_split"] = (args.vd_eval_split
+                                  if args.vd_mode == "replay" else "all")
         iters = args.iters or 150
     else:
         scenario = None
         cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                    episode_ticks=150, task_cpu_scale=1.0)
+        eval_cfg = dict(cfg)
         iters = args.iters or ITERATIONS
     if args.priority:
         cfg["priority_aware"] = True
+        eval_cfg["priority_aware"] = True
     if args.twin_quality:
         cfg["twin_quality_aware"] = True
+        eval_cfg["twin_quality_aware"] = True
 
     local_critic = args.local_critic or args.ippo
     name = "LocalCriticPPO" if local_critic else "MAPPO"
@@ -84,7 +97,7 @@ def main():
           f"({'SUMO' if args.sumo else 'mock'}) ===")
     runs = []
     for s in range(args.seeds):
-        m = train_one(cfg, s, iters, local_critic)
+        m = train_one(cfg, eval_cfg, s, iters, local_critic)
         runs.append(m)
         print(f"  seed {s} | " + " ".join(
             f"{LABELS[k]} {m[k]:.2f}" for k in METRICS) + f" | 分布 {m['dist']}")
@@ -102,6 +115,8 @@ def main():
                "twin_quality_aware": args.twin_quality,
                "scenario": scenario.name if scenario else "mock",
                "vd_mode": args.vd_mode if args.sumo else "off",
+               "vd_split": args.vd_split if args.sumo else "all",
+               "vd_eval_split": args.vd_eval_split if args.sumo else "all",
                "runs": runs, "summary": summary}
     # 若已有另一演算法的結果，合併保存方便對照
     if os.path.exists(out):
@@ -111,9 +126,11 @@ def main():
         except Exception:
             old = []
         identity = (name, payload["scenario"], payload["vd_mode"],
+                    payload["vd_split"], payload["vd_eval_split"],
                     payload["priority_aware"], payload["twin_quality_aware"])
         old = [o for o in old if (
             o.get("algo"), o.get("scenario", "mock"), o.get("vd_mode", "off"),
+            o.get("vd_split", "all"), o.get("vd_eval_split", "all"),
             o.get("priority_aware", False), o.get("twin_quality_aware", False)
         ) != identity]
         old.append(payload)

@@ -28,7 +28,8 @@ import matplotlib.pyplot as plt
 
 from vec_env_ma import VECMultiEnv, MA_ACTIONS, SCRIPT_DIR
 from mappo import MAPPO
-from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
+from scenario_config import (scenario_cli, vd_split_cli,
+                             env_scenario_kwargs, model_suffix)
 
 # 評估方法清單：(顯示名稱(英文,給圖表用), mode)
 METHODS = [
@@ -100,11 +101,12 @@ def main():
     priority = "--priority" in sys.argv
     twin_quality = "--twin-quality" in sys.argv
     scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
+    vd_split = vd_split_cli(sys.argv, use_sumo, vd_mode, default="test")
     episodes = 5 if use_sumo else 10
 
     if use_sumo:
         cfg = dict(mock=False, arrival_rate=0.3, episode_ticks=300, task_cpu_scale=1.0)
-        cfg.update(env_scenario_kwargs(scenario, vd_mode))
+        cfg.update(env_scenario_kwargs(scenario, vd_mode, vd_split))
     else:
         cfg = dict(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                    episode_ticks=150, task_cpu_scale=1.0)

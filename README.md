@@ -43,7 +43,7 @@ flowchart TB
 
     subgraph LEARN["🧠 學習與評估"]
         MAPPO["mappo.py<br/>CTDE 共享actor+中央critic<br/>PPO+GAE+LR衰減"]
-        EVAL["compare_and_plot.py 六方法對照<br/>run_ablation.py 3×2 消融<br/>verify_invariants.py 42項檢查<br/>analyze_offloading.py oracle分析"]
+        EVAL["compare_and_plot.py 六方法對照<br/>run_ablation.py 3×2 消融<br/>verify_invariants.py 45項檢查<br/>analyze_offloading.py oracle分析"]
     end
 
     OSM --> NET --> RSU
@@ -80,7 +80,7 @@ flowchart LR
 flowchart LR
     S1["1️⃣ 路網<br/>osmconvert裁切<br/>build_net.bat"] --> S2["2️⃣ RSU佈點<br/>setup_rsu.py<br/>--mode junction"]
     S2 --> S3["3️⃣ 真實車流<br/>make_real_flow.py<br/>(僅小型客車)"]
-    S3 --> S4["4️⃣ 驗證<br/>verify_invariants.py<br/>42項全PASS"]
+    S3 --> S4["4️⃣ 驗證<br/>verify_invariants.py<br/>45項全PASS"]
     S4 --> S5["5️⃣ 訓練<br/>train_mappo.py --sumo<br/>(多指標CSV)"]
     S5 --> S6["6️⃣ 評估<br/>compare_and_plot.py<br/>run_ablation.py"]
 ```
@@ -90,7 +90,7 @@ flowchart LR
 | **1. 路網** | 從 [Geofabrik](https://download.geofabrik.de/asia/taiwan.html) 下載 `taiwan-latest.osm.pbf` → `osmconvert taiwan.pbf -b="西,南,東,北" -o=area.osm` → `build_net.bat area.osm` | `*.net.xml` |
 | **2. RSU 佈點** | `python setup_rsu.py --net hepingeast2.net.xml --mode junction --corners 2 --plot` | `rsu.add.xml`、`rsu_positions.json`、佈點圖 |
 | **3. 真實車流** | `python make_real_flow.py --net hepingeast2.net.xml --remap` → 用 `vd_debug.add.xml` 在 sumo-gui 校對 | `real_traffic_hep.rou.xml`(小客車)、`vd_sumo_mapping.csv` |
-| **4. 場景+驗證** | `heping.sumocfg` 指向 net/rou/rsu → `python verify_invariants.py` | 42 項不變量 PASS |
+| **4. 場景+驗證** | `heping.sumocfg` 指向 net/rou/rsu → `python verify_invariants.py` | 45 項不變量 PASS |
 | **5. 訓練** | `python train_mappo.py --sumo` | `mappo_vec.pt`、多指標收斂 CSV |
 | **6. 評估** | `python compare_and_plot.py --sumo`、`python run_ablation.py --sumo --plot` | 對照表/圖、3×2 消融 |
 
@@ -119,23 +119,30 @@ VD 對應(`vd_sumo_mapping.csv`)綁定路網,`--remap` 會自動偵測重建。
 
 # 4. 正式、可重現的 replay 訓練與同條件評估
 & .\.venv\Scripts\python.exe train_mappo.py --sumo --scenario=heping `
-  --vd-mode=replay --twin-quality --seed=0
+  --vd-mode=replay --vd-split=train --twin-quality --seed=0
 & .\.venv\Scripts\python.exe compare_and_plot.py --sumo --scenario=heping `
-  --vd-mode=replay --twin-quality
+  --vd-mode=replay --vd-split=test --twin-quality
 & .\.venv\Scripts\python.exe visualize_dt.py --sumo --scenario heping `
-  --vd-mode replay --twin-quality --tau 2 --ticks 200
+  --vd-mode replay --vd-split test --twin-quality --tau 2 --ticks 200
 
 # 5. 即時展示（需網路；不建議作為論文訓練資料）
 & .\.venv\Scripts\python.exe visualize_dt.py --sumo --scenario heping `
   --vd-mode live --twin-quality --tau 2 --ticks 200
 ```
 
-`replay` 每 300 個模擬秒換下一筆封存快照；`live` 每 300 秒牆鐘時間更新。
+`replay` 依時間順序切成 train 70%、validation 15%、test 15%；每個 300 秒
+episode 輪換該 partition 的起始快照，較長 episode 則每 300 模擬秒再換下一筆。
+訓練過程的定期評估使用 validation，正式比較使用未見的 test。`live` 每 300 秒
+牆鐘時間更新。
 兩者都透過環境既有的同一條 TraCI 連線注入車輛，並覆寫靜態 route file，
 因此不會同時啟動第二個 SUMO 或把靜態與動態需求重複相加。預期的正式模型名稱為
 `mappo_heping_replay_tq_vec.pt`；結果檔也會包含 `_heping_replay_tq` 後綴。
 和平東路三個號誌採固定時制，避免 SUMO actuated 控制缺少 detector 時的警告，也讓
 不同 seed 的號誌控制條件一致；本研究不把號誌最佳化納入動作空間。
+
+時間切分至少需要 3 筆快照；資料不足時程式會明確停止，不會偷偷把同一筆同時放進
+train 與 test。持續收集模式遇到暫時網路錯誤會每 60 秒內重試，按 `Ctrl+C` 則保留
+已下載檔案並乾淨結束。
 
 ---
 
@@ -158,7 +165,7 @@ VD 對應(`vd_sumo_mapping.csv`)綁定路網,`--remap` 會自動偵測重建。
 | `make_real_flow.py` | 台北 VD 真實車流→SUMO(舊版對應/校對工具) |
 | `compare_and_plot.py` | 六方法對照(Local/RSU/Cloud/Random/Greedy/MAPPO)+多指標圖 |
 | `run_ablation.py` | 移動性消融:預判{linear,kalman,route}×恢復{fail,v2i} |
-| `verify_invariants.py` | 42 項物理／孿生／場景不變量迴歸測試 |
+| `verify_invariants.py` | 45 項物理／孿生／場景不變量迴歸測試 |
 | `analyze_offloading.py` | 單任務 oracle:各層何時勝出、交叉點、Pareto 圖 |
 
 ---

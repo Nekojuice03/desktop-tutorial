@@ -30,19 +30,32 @@ def main():
     rows = load_mapping(scenario.vd_mapping)
     os.makedirs(scenario.vd_data_dir, exist_ok=True)
     n = 0
-    while args.count == 0 or n < args.count:
-        raw = fetch(args.url)
-        rates, source_time = rates_from_snapshot(rows, raw)
-        if not any(rates):
-            raise RuntimeError("download succeeded but no mapped VD IDs were present")
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out = os.path.join(scenario.vd_data_dir, f"VD_SECTION_{stamp}.xml")
-        with open(out, "wb") as f:
-            f.write(raw)
-        print(f"saved {out} | source={source_time or 'unknown'} | total={sum(rates):.1f} veh/h")
-        n += 1
-        if args.count == 0 or n < args.count:
-            time.sleep(max(1, args.interval))
+    try:
+        while args.count == 0 or n < args.count:
+            try:
+                raw = fetch(args.url)
+                rates, source_time = rates_from_snapshot(rows, raw)
+                if not any(rates):
+                    raise RuntimeError(
+                        "download succeeded but no mapped VD IDs were present")
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                out = os.path.join(scenario.vd_data_dir, f"VD_SECTION_{stamp}.xml")
+                with open(out, "wb") as f:
+                    f.write(raw)
+                print(f"saved {out} | source={source_time or 'unknown'} | "
+                      f"total={sum(rates):.1f} veh/h", flush=True)
+                n += 1
+            except Exception as exc:
+                if args.count != 0:
+                    raise
+                print(f"warning: VD fetch failed ({exc}); retrying in "
+                      f"{min(60, max(1, args.interval))}s", flush=True)
+                time.sleep(min(60, max(1, args.interval)))
+                continue
+            if args.count == 0 or n < args.count:
+                time.sleep(max(1, args.interval))
+    except KeyboardInterrupt:
+        print(f"\nstopped cleanly; collected {n} snapshot(s) in this run")
 
 
 if __name__ == "__main__":

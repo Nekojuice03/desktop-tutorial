@@ -272,10 +272,13 @@ import os as _os
 import xml.etree.ElementTree as _ET
 from scenario_config import (resolve_scenario as _resolve_scenario,
                              model_suffix as _model_suffix,
-                             scenario_cli as _scenario_cli)
+                             scenario_cli as _scenario_cli,
+                             vd_split_cli as _vd_split_cli)
 from vd_provider import (load_mapping as _load_mapping,
                          rates_from_snapshot as _rates_from_snapshot,
-                         _read_net_routes as _read_net_routes)
+                         _read_net_routes as _read_net_routes,
+                         select_replay_files as _select_replay_files)
+from vec_env import TraciWorld as _TraciWorld
 _sc = _resolve_scenario("heping")
 _rows = _load_mapping(_sc.vd_mapping)
 _net_root = _ET.parse(_sc.net_file).getroot()
@@ -317,6 +320,19 @@ _cli_sc, _cli_mode = _scenario_cli(
     True)
 check("scenario CLI 同時接受 '--key value' 寫法",
       _cli_sc.name == "heping" and _cli_mode == "replay")
+_files = [f"VD_{i:02}.xml" for i in range(10)]
+_tr = _select_replay_files(_files, "train")
+_va = _select_replay_files(_files, "validation")
+_te = _select_replay_files(_files, "test")
+check("VD 依時間切成 70/15/15 且三組互斥",
+      len(_tr) == 7 and len(_va) == 1 and len(_te) == 2
+      and not (set(_tr) & set(_va) or set(_tr) & set(_te) or set(_va) & set(_te)))
+check("--vd-split 可指定未見 test partition",
+      _vd_split_cli(["eval.py", "--vd-split", "test"], True, "replay") == "test")
+_tw1 = _TraciWorld(_sc.sumocfg)
+_tw2 = _TraciWorld(_sc.sumocfg)
+check("訓練與評估配置不同 TraCI label，避免全域連線互換",
+      _tw1.label != _tw2.label)
 
 print("\n" + "=" * 60)
 fails = [n for n, ok, _ in RESULTS if not ok]

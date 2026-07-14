@@ -55,7 +55,7 @@ class VECMultiEnv:
                  twin_quality_aware=False, scenario="heping", rsu_path=None,
                  vd_mode="static", vd_mapping=None, vd_data_dir=None,
                  vd_net_file=None, vd_dynamic_routes=None,
-                 vd_update_interval=300.0):
+                 vd_update_interval=300.0, vd_split="all"):
         """
         predictor：V2V 連線壽命預判器(消融階梯：naive → 可部署 → oracle)
           "linear" = 等速直線外推(baseline，路口轉彎會高估)
@@ -103,6 +103,7 @@ class VECMultiEnv:
         self.vd_net_file = vd_net_file
         self.vd_dynamic_routes = vd_dynamic_routes
         self.vd_update_interval = float(vd_update_interval)
+        self.vd_split = vd_split
         self.arrival_rate = arrival_rate
         self.server_ratio = server_ratio
         self.episode_ticks = episode_ticks
@@ -787,6 +788,8 @@ class VECMultiEnv:
                 data_dir=self.vd_data_dir,
                 net_file=self.vd_net_file,
                 update_interval=self.vd_update_interval,
+                replay_split=self.vd_split,
+                replay_episode=self._ep if seed is None else int(seed),
             )
         self.world = MockWorld(n=self.mock_vehicles, seed=s) if self.mock \
             else TraciWorld(self.cfg, gui=self.gui, vd_provider=provider,
@@ -877,6 +880,7 @@ class VECMultiEnv:
                 "max_twin_age_s": s["twin_age_max"],
                 "scenario": self.scenario if not self.mock else "mock",
                 "vd_mode": self._traffic_status.get("vd_mode", self.vd_mode),
+                "vd_split": self._traffic_status.get("vd_split", self.vd_split),
                 "vd_source_time": self._traffic_status.get("vd_source_time"),
                 "avg_vd_data_age_s": (s["vd_age_sum"] / s["vd_age_n"])
                                         if s["vd_age_n"] else 0.0,
@@ -885,6 +889,8 @@ class VECMultiEnv:
                 "vd_injected": self._traffic_status.get("vd_injected", 0),
                 "vd_inject_failures": self._traffic_status.get("vd_inject_failures", 0),
                 "vd_total_vph": self._traffic_status.get("vd_total_vph", 0.0),
+                "vd_snapshot_count": self._traffic_status.get("vd_snapshot_count", 0),
+                "vd_snapshot_index": self._traffic_status.get("vd_snapshot_index"),
                 "deadline_miss": s["deadline_miss"], "infeasible": s["infeasible"],
                 "pred_reject": s["pred_reject"], "link_break": s["link_break"],
                 "break_recovered": s["break_recovered"],

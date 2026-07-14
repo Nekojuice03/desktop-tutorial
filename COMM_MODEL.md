@@ -200,12 +200,16 @@ q_j=TotalVol_d\times\frac{60}{\Delta t_{min}}\times r_{passenger}\times s_j,
 位置誤稱為逐車軌跡重建；轉向與路線仍是模型假設。
 
 - `static`：單一封存快照產生固定 `rou.xml`，適合場景肉眼校對。
-- `replay`：依模擬時間每 300 秒換一筆快照，適合論文訓練與多 seed 比較。
+- `replay`：快照依時間切為 train 70%、validation 15%、test 15%。每個
+  300 秒 episode 輪換所選 partition 的起點；較長 episode 每 300 模擬秒換下一筆。
+  訓練與定期評估分別使用 train/validation，最終結果只報告未見 test。
 - `live`：依牆鐘時間每 300 秒更新，適合部署展示，不保證可重現。
 
 動態模式由 `TraciWorld` 在同一 TraCI session 加車，並用只含 `vType` 的動態
 route file 覆寫 `heping.sumocfg` 內的靜態需求，防止 double counting。每回合輸出
 VD mode、來源、更新數、抓取／注入失敗、注入車數、總 vph 與 ingestion age。
+訓練環境和評估環境各自擁有具名 TraCI connection，兩個 SUMO process 不共享
+vehicle namespace，也不會在週期性評估時關閉或取代對方。
 由於目前官方 section feed 沒有可靠來源時間戳，`vd_data_age_s` 僅代表「程式接收
 快照後經過多久」，不得當成感測器到決策端的完整 AoI。
 

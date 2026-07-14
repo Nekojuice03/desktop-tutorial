@@ -25,7 +25,8 @@ from collections import Counter
 import numpy as np
 
 from vec_env_ma import VECMultiEnv, MA_ACTIONS, SCRIPT_DIR
-from scenario_config import scenario_cli, env_scenario_kwargs, model_suffix
+from scenario_config import (scenario_cli, vd_split_cli,
+                             env_scenario_kwargs, model_suffix)
 
 RATES = [0.15, 0.3, 0.5, 0.8, 1.2]   # 任務到達率(每 client 每秒)
 EPISODES = 4
@@ -72,9 +73,10 @@ def main():
     priority = "--priority" in sys.argv
     twin_quality = "--twin-quality" in sys.argv
     scenario, vd_mode = scenario_cli(sys.argv, use_sumo)
+    vd_split = vd_split_cli(sys.argv, use_sumo, vd_mode, default="test")
     if use_sumo:
         base = dict(mock=False, episode_ticks=300, task_cpu_scale=1.0)
-        base.update(env_scenario_kwargs(scenario, vd_mode))
+        base.update(env_scenario_kwargs(scenario, vd_mode, vd_split))
     else:
         base = dict(mock=True, mock_vehicles=24, server_ratio=0.45,
                     episode_ticks=300, task_cpu_scale=1.0)
