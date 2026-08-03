@@ -19,10 +19,30 @@ import os
 import csv
 import glob
 import argparse
-
-from make_real_flow import parse_live_svolume, MAPPING_CSV
+import xml.etree.ElementTree as ET
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+MAPPING_CSV = "vd_sumo_mapping.csv"
+
+
+def parse_live_svolume(text):
+    """只取小型客車 Svolume（與 make_real_flow 同邏輯，但不依賴 sumolib）。
+    回傳 {DeviceID: {LaneNO: Svolume}}。"""
+    if not text.lstrip().startswith("<?xml"):
+        text = '<?xml version="1.0" encoding="utf-8"?>\n<root>\n' + text + "\n</root>"
+    root = ET.fromstring(text)
+    sv = {}
+    for devel in root.iter():
+        if not devel.tag.endswith("VDDevice"):
+            continue
+        dev = (devel.findtext("DeviceID") or "").strip()
+        if not dev:
+            continue
+        for lane in devel.findall("LaneData"):
+            ln = int(float(lane.findtext("LaneNO") or 0))
+            s = float(lane.findtext("Svolume") or 0)   # ★小型客車
+            sv.setdefault(dev, {})[ln] = s
+    return sv
 
 
 def mapped_device_ids():
@@ -42,7 +62,7 @@ def mapped_device_ids():
 def file_volume(path, keep_ids):
     """回傳 (注入路網小客車量, 命中設備數, 全部設備小客車量)。"""
     text = open(path, encoding="utf-8").read()
-    sv, _ti, _ratio = parse_live_svolume(text)
+    sv = parse_live_svolume(text)
     total_all = sum(sum(lanes.values()) for lanes in sv.values())
     if keep_ids:
         hit = {d: lanes for d, lanes in sv.items() if d in keep_ids}
