@@ -25,24 +25,57 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MAPPING_CSV = "vd_sumo_mapping.csv"
 
 
-def parse_live_svolume(text):
-    """只取小型客車 Svolume（與 make_real_flow 同邏輯，但不依賴 sumolib）。
-    回傳 {DeviceID: {LaneNO: Svolume}}。"""
+def _wrap(text):
     if not text.lstrip().startswith("<?xml"):
         text = '<?xml version="1.0" encoding="utf-8"?>\n<root>\n' + text + "\n</root>"
-    root = ET.fromstring(text)
-    sv = {}
+    return ET.fromstring(text)
+
+
+def parse_device_svolume(root):
+    """設備模式(GetVDDATA)：{DeviceID: 小型客車 Svolume 總和}。"""
+    out = {}
     for devel in root.iter():
-        if not devel.tag.endswith("VDDevice"):
+        if not devel.tag.split("}")[-1] == "VDDevice":
             continue
         dev = (devel.findtext("DeviceID") or "").strip()
         if not dev:
             continue
+        s = 0.0
         for lane in devel.findall("LaneData"):
-            ln = int(float(lane.findtext("LaneNO") or 0))
-            s = float(lane.findtext("Svolume") or 0)   # ★小型客車
-            sv.setdefault(dev, {})[ln] = s
-    return sv
+            s += float(lane.findtext("Svolume") or 0)   # ★小型客車
+        out[dev] = out.get(dev, 0.0) + s
+    return out
+
+
+def parse_section_totalvol(root):
+    """路段模式(GetVD/VD_SECTION)：{SectionId: TotalVol}。"""
+    out = {}
+    for sec in root.iter():
+        if not sec.tag.split("}")[-1] == "SectionData":
+            continue
+        sid = vol = None
+        for child in sec:
+            tag = child.tag.split("}")[-1]
+            val = (child.text or "").strip()
+            if tag == "SectionId":
+                sid = val
+            elif tag == "TotalVol":
+                try:
+                    vol = float(val)
+                except (ValueError, TypeError):
+                    vol = None
+        if sid:
+            out[sid] = out.get(sid, 0.0) + (vol or 0.0)
+    return out
+
+
+def parse_volumes(text):
+    """自動偵測 device / section 模式，回傳 ({id: volume}, mode)。"""
+    root = _wrap(text)
+    dev = parse_device_svolume(root)
+    if dev:
+        return dev, "device(Svolume)"
+    return parse_section_totalvol(root), "section(TotalVol)"
 
 
 def mapped_device_ids():
@@ -62,13 +95,12 @@ def mapped_device_ids():
 def file_volume(path, keep_ids):
     """回傳 (注入路網小客車量, 命中設備數, 全部設備小客車量)。"""
     text = open(path, encoding="utf-8").read()
-    sv = parse_live_svolume(text)
-    total_all = sum(sum(lanes.values()) for lanes in sv.values())
+    vols, mode = parse_volumes(text)
+    total_all = sum(vols.values())
     if keep_ids:
-        hit = {d: lanes for d, lanes in sv.items() if d in keep_ids}
-        total_mapped = sum(sum(lanes.values()) for lanes in hit.values())
-        return total_mapped, len(hit), total_all
-    return total_all, len(sv), total_all
+        hit = {d: v for d, v in vols.items() if d in keep_ids}
+        return sum(hit.values()), len(hit), total_all, mode
+    return total_all, len(vols), total_all, mode
 
 
 def main():
@@ -91,17 +123,21 @@ def main():
         return
 
     rows = []
+    modes = set()
     for fp in files:
         try:
-            vol, hit, all_vol = file_volume(fp, keep)
+            vol, hit, all_vol, mode = file_volume(fp, keep)
         except Exception as e:
             print(f"  ⚠ 略過 {os.path.basename(fp)}({e})")
             continue
+        modes.add(mode)
         rows.append((os.path.basename(fp), vol, hit, all_vol, fp))
 
+    if modes:
+        print(f"偵測資料模式：{', '.join(sorted(modes))}")
     if keep and all(r[2] == 0 for r in rows):
-        print("⚠ 沒有任何檔命中路網內 VD 設備 —— VD 檔的 DeviceID 與 mapping 不同"
-              "ID 系統。改用 --all-devices 重跑，或檢查 vd_sumo_mapping.csv。")
+        print("⚠ 沒有任何檔命中路網內 VD 設備 —— 站碼與 mapping 對不上"
+              "(可能 ID 系統不同)。改用 --all-devices 重跑，或檢查 vd_sumo_mapping.csv。")
         return
 
     # 依注入量排序
