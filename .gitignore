@@ -31,3 +31,5 @@ mappo_train_log_ippo.csv
 dt_visualization.gif
 dt_snapshot.png
 action_prob_diag.json
+density_compare.json
+_dens_*.sumocfg

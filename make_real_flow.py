@@ -300,6 +300,8 @@ def main():
     p.add_argument("--map-only", action="store_true", help="只做 VD→edge 對應，不產車流")
     p.add_argument("--remap", action="store_true", help="忽略既有 CSV 強制重新對應")
     p.add_argument("--end", type=int, default=3600, help="flow 結束秒數")
+    p.add_argument("--out", default=OUT_ROUTE,
+                   help="輸出車流檔名(低/高車流對比時各存一檔，避免互相覆蓋)")
     args = p.parse_args()
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -380,7 +382,7 @@ def main():
         def vph_of(row):
             s = sv.get(row["DeviceID"], {}).get(int(row["LaneNO"]))
             return None if s is None else s * (60.0 / ti.get(row["DeviceID"], 5.0))
-        n = write_routes(net, rows, vph_of, end=args.end)
+        n = write_routes(net, rows, vph_of, end=args.end, out=args.out)
     else:
         if sec_vol is None:   # 沿用舊 CSV 進來的路徑 → 補抓路段 TotalVol
             static_text = (open(args.static, encoding="utf-8").read()
@@ -394,10 +396,11 @@ def main():
         def vph_of(row):
             v = sec_vol.get(row["DeviceID"])
             return None if v is None else v * 12.0 * s_ratio   # 5分→每小時
-        n = write_routes(net, rows, vph_of, end=args.end, depart_override="best")
+        n = write_routes(net, rows, vph_of, end=args.end, out=args.out,
+                         depart_override="best")
     if n:
-        print("下一步：把 osm.sumocfg 的 route-files 改成 real_traffic_hep.rou.xml，"
-              "或執行 sumo-gui -n {} -r {} -a rsu.add.xml".format(args.net, OUT_ROUTE))
+        print("下一步：把 osm.sumocfg 的 route-files 改成 {0}，"
+              "或執行 sumo-gui -n {1} -r {0} -a rsu.add.xml".format(args.out, args.net))
 
 
 if __name__ == "__main__":
