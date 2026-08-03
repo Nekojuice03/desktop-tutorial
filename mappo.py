@@ -103,6 +103,17 @@ class MAPPO:
         return self.actor.forward(obs).argmax(-1).cpu().numpy()
 
     @torch.no_grad()
+    def act_probs(self, obs_batch):
+        """一批觀測 → 完整 softmax 機率矩陣 [k, n_actions]（診斷用）。
+        揭示 argmax 分布圖背後的真實策略機率：某動作 argmax=0% 未必機率=0%，
+        可能只是永遠差一點被壓成第二名。"""
+        if len(obs_batch) == 0:
+            return np.zeros((0, 0), dtype=np.float32)
+        obs = torch.as_tensor(obs_batch, dtype=torch.float32, device=self.device)
+        logits = self.actor.forward(obs)
+        return torch.softmax(logits, dim=-1).cpu().numpy()
+
+    @torch.no_grad()
     def value(self, state):
         s = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         return float(self.critic(s).item())
