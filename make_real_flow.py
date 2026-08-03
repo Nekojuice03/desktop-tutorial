@@ -226,6 +226,33 @@ def parse_live_svolume(text):
     return sv, ti, s_ratio
 
 
+def parse_live_totalvol(text):
+    """路段模式即時/歷史檔：{SectionId: TotalVol}（不需座標，直接讀 --xml 的
+    歷史值）。用於『沿用既有 mapping』時，仍能從歷史快照取得該時刻 TotalVol，
+    而非退回線上即時值（否則不同歷史檔會產生相同車流）。"""
+    if not text.lstrip().startswith("<?xml"):
+        text = '<?xml version="1.0" encoding="utf-8"?>\n<root>\n' + text + "\n</root>"
+    root = ET.fromstring(text)
+    out = {}
+    for sec in root.iter():
+        if not sec.tag.split("}")[-1] == "SectionData":
+            continue
+        sid = vol = None
+        for child in sec:
+            tag = child.tag.split("}")[-1]
+            val = (child.text or "").strip()
+            if tag == "SectionId":
+                sid = val
+            elif tag == "TotalVol":
+                try:
+                    vol = float(val)
+                except (ValueError, TypeError):
+                    vol = None
+        if sid and vol is not None:
+            out[sid] = out.get(sid, 0.0) + vol
+    return out
+
+
 # ---------- 4. 產生 flow(出口=可達的邊界出口，均分) ----------
 def fringe_exits(net):
     return [e for e in net.getEdges()
@@ -314,6 +341,15 @@ def main():
     sv, ti, s_ratio = parse_live_svolume(live_text)
     print(f"車流資料：{len(sv)} 台 VD(全市)，全市小客車比例 {s_ratio:.2f}")
     sec_vol = None   # 路段模式用：{SectionId: TotalVol(輛/5分)}
+    # ★若 --xml 本身是路段模式檔(SectionData/TotalVol)，直接採用它的歷史
+    #   TotalVol。否則沿用既有 mapping 時 sec_vol 會是 None → 退回線上即時值，
+    #   造成不同歷史快照產出相同車流(密度對比失效)。
+    if args.xml and not sv:
+        _hist = parse_live_totalvol(live_text)
+        if _hist:
+            sec_vol = _hist
+            print(f"[路段模式] 由 --xml 讀得 {len(sec_vol)} 個路段的歷史 TotalVol"
+                  f"(採此快照時刻之值，不抓線上即時)")
 
     # 對應表：已有「且屬於本路網」就沿用(保住手工修正)，否則自動建立。
     # ★關鍵防呆：舊專案的 CSV 是別的路網(如新生南路)做的，其 edge 不在
