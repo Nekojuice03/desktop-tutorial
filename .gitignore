@@ -38,3 +38,9 @@ _dens_*.sumocfg
 edgeData_twinval.xml
 twin_validation.add.xml
 twin_validation_stats.xml
+
+# 車流校正產物(calibrate_flow.py)
+real_traffic_hep_calibrated.rou.xml
+flow_counts.xml
+_cand_trips.xml
+_cand_routes.rou.xml

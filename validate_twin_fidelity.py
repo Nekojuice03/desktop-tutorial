@@ -214,6 +214,107 @@ def net_edges_and_sinks(net_path):
     return ids, {e for e in ids if e not in has_out}
 
 
+def load_vd_ground_truth(map_rows, edges_in_net, vd_xml=None, live_xml=None,
+                         fetch=False, caller="validate_twin_fidelity.py"):
+    """VD 快照 → 逐 edge 的小客車地真(veh/h)。
+
+    這是「VD 量測 → SUMO edge 流量」的**單一事實來源**,換算方式與
+    make_real_flow.py 的 vph_of 一致;保真度驗證與車流校正都走這裡,
+    避免兩邊算法各自漂移。
+
+    回傳 (per_edge, missing, meta):
+      per_edge {edge_id: {edge, devices[], kinds set, vd_vph, name}}
+      missing  [(DeviceID, 說明)]
+      meta     {s_ratio, device_mode, static_src, live_src}
+    """
+    # 全市小客車比例(路段模式換算用)
+    live_text = None
+    live_src = live_xml
+    if live_xml:
+        live_text = read_maybe_gz(live_xml)
+    elif fetch:
+        live_text = fetch_gz(LIVE_VD_URL)
+        live_src = archive_snapshot(live_text, "VD")
+    else:
+        cands = sorted(glob.glob(os.path.join(SCRIPT_DIR, "traffic_data", "VD_*.xml")))
+        if cands:
+            live_text = read_maybe_gz(cands[-1])
+            live_src = cands[-1]
+            print(f"[預設] 全市小客車比例取自最新歷史快照 {os.path.basename(cands[-1])}")
+    if live_text is None:
+        sys.exit("[錯誤] 需要設備級快照才能算全市小客車比例;"
+                 "請用 --live-xml 指定,或 --fetch 現抓")
+    sv, ti, s_ratio = parse_device_svolume(live_text)
+    print(f"設備級快照:{len(sv)} 台 VD;全市小客車比例 s_ratio={s_ratio:.3f}")
+
+    devs = {r["DeviceID"] for r in map_rows}
+    device_mode = bool(devs & set(sv))
+    sec_vol = {}
+    static_src = None
+    if not device_mode:
+        static_text = None
+        static_src = vd_xml
+        if vd_xml:
+            static_text = read_maybe_gz(vd_xml)
+        elif fetch:
+            static_text = fetch_gz(STATIC_VD_URL)
+            static_src = archive_snapshot(static_text, "GetVD")
+        if static_text is None:
+            sys.exit(
+                "[錯誤] 本對應表為『路段模式』(SectionId),需要路段級 GetVD.xml 快照\n"
+                "       才有 TotalVol 地真。traffic_data/ 現有的 VD_*.xml 是設備級\n"
+                "       (GetVDDATA,V 開頭 DeviceID),不含 SectionId → 不能當地真。\n"
+                "\n"
+                "       解法一(建議):現抓並自動存檔\n"
+                f"         python {caller} --fetch\n"
+                "       解法二:已有快照檔時指定路徑(注意 PowerShell 不要留角括號)\n"
+                f"         python {caller} --vd-xml traffic_data\\GetVD_20260817_1200.xml")
+        sec_vol = parse_section_totalvol(static_text)
+        print(f"[路段模式] 快照含 {len(sec_vol)} 個路段的 TotalVol;"
+              f"地真 = TotalVol × 12 × {s_ratio:.3f}")
+    else:
+        print("[設備模式] 地真 = 逐車道 Svolume × (60/TimeInterval)")
+
+    # 逐 edge 聚合地真(edgeData 的比較單位是 edge)
+    per_edge, missing = {}, []
+    for r in map_rows:
+        eid = r.get("SumoEdgeID", "")
+        if eid not in edges_in_net:
+            missing.append((r["DeviceID"], eid))
+            continue
+        if device_mode:
+            lanes = sv.get(r["DeviceID"], {})
+            sval = lanes.get(int(r["LaneNO"]))
+            vph = None if sval is None else sval * (60.0 / ti.get(r["DeviceID"], 5.0))
+        else:
+            v = sec_vol.get(r["DeviceID"])
+            vph = None if v is None else v[0] * 12.0 * s_ratio
+        if vph is None:
+            missing.append((r["DeviceID"], eid + "(快照無此站的量)"))
+            continue
+        kind = classify_row(r.get("SectionName", ""))
+        e = per_edge.setdefault(eid, {"edge": eid, "devices": [], "kinds": set(),
+                                      "vd_vph": 0.0, "name": r.get("SectionName", "")})
+        e["devices"].append(r["DeviceID"])
+        e["kinds"].add(kind)
+        e["vd_vph"] += vph
+    if missing:
+        print(f"[略過] {len(missing)} 列(edge 不在路網或快照無資料):"
+              + ", ".join(f"{d}/{e}" for d, e in missing[:6])
+              + (" …" if len(missing) > 6 else ""))
+    return per_edge, missing, {"s_ratio": s_ratio, "device_mode": device_mode,
+                               "static_src": static_src, "live_src": live_src}
+
+
+def read_mapping(path):
+    if not os.path.exists(path):
+        sys.exit(f"[錯誤] 找不到 {path}")
+    with open(path, encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    print(f"對應表 {len(rows)} 列")
+    return rows
+
+
 def route_flow_targets(route_path):
     """rou.xml → {edge_id: 指定的 vehsPerHour 總和}, 以及 flow 的最大 end 時刻。"""
     targets, end_max = {}, 0.0
@@ -463,90 +564,14 @@ def main():
     print(f"量測窗:[{begin:.0f}s, {end:.0f}s] = {end - begin:.0f}s")
 
     # 3) mapping + 實測地真 ------------------------------------------
-    if not os.path.exists(args.mapping):
-        sys.exit(f"[錯誤] 找不到 {args.mapping}")
-    with open(args.mapping, encoding="utf-8-sig") as f:
-        map_rows = list(csv.DictReader(f))
-    print(f"對應表 {len(map_rows)} 列")
+    map_rows = read_mapping(args.mapping)
 
-    # 全市小客車比例(路段模式換算用)
-    live_text = None
-    live_src = args.live_xml
-    if args.live_xml:
-        live_text = read_maybe_gz(args.live_xml)
-    elif args.fetch:
-        live_text = fetch_gz(LIVE_VD_URL)
-        live_src = archive_snapshot(live_text, "VD")
-    else:
-        cands = sorted(glob.glob(os.path.join(SCRIPT_DIR, "traffic_data", "VD_*.xml")))
-        if cands:
-            live_text = read_maybe_gz(cands[-1])
-            live_src = cands[-1]
-            print(f"[預設] 全市小客車比例取自最新歷史快照 {os.path.basename(cands[-1])}")
-    if live_text is None:
-        sys.exit("[錯誤] 需要設備級快照才能算全市小客車比例;"
-                 "請用 --live-xml 指定,或 --fetch 現抓")
-    sv, ti, s_ratio = parse_device_svolume(live_text)
-    print(f"設備級快照:{len(sv)} 台 VD;全市小客車比例 s_ratio={s_ratio:.3f}")
-
-    devs = {r["DeviceID"] for r in map_rows}
-    device_mode = bool(devs & set(sv))
-    sec_vol = {}
-    static_src = None
-    if not device_mode:
-        static_text = None
-        static_src = args.vd_xml
-        if args.vd_xml:
-            static_text = read_maybe_gz(args.vd_xml)
-        elif args.fetch:
-            static_text = fetch_gz(STATIC_VD_URL)
-            static_src = archive_snapshot(static_text, "GetVD")
-        if static_text is None:
-            sys.exit(
-                "[錯誤] 本對應表為『路段模式』(SectionId),需要路段級 GetVD.xml 快照\n"
-                "       才有 TotalVol 地真。traffic_data/ 現有的 VD_*.xml 是設備級\n"
-                "       (GetVDDATA,V 開頭 DeviceID),不含 SectionId → 不能當地真。\n"
-                "\n"
-                "       解法一(建議):現抓並自動存檔\n"
-                "         python validate_twin_fidelity.py --sumocfg hepingeast2.sumocfg "
-                "--fetch --plot\n"
-                "       解法二:已有快照檔時指定路徑(注意 PowerShell 不要留角括號)\n"
-                "         python validate_twin_fidelity.py --sumocfg hepingeast2.sumocfg "
-                "--vd-xml traffic_data\\GetVD_20260817_1200.xml --plot")
-        sec_vol = parse_section_totalvol(static_text)
-        print(f"[路段模式] 快照含 {len(sec_vol)} 個路段的 TotalVol;"
-              f"地真 = TotalVol × 12 × {s_ratio:.3f}")
-    else:
-        print("[設備模式] 地真 = 逐車道 Svolume × (60/TimeInterval)")
-
-    # 逐 edge 聚合地真(edgeData 的比較單位是 edge)
-    per_edge = {}
-    missing = []
-    for r in map_rows:
-        eid = r.get("SumoEdgeID", "")
-        if eid not in edges_in_net:
-            missing.append((r["DeviceID"], eid))
-            continue
-        if device_mode:
-            lanes = sv.get(r["DeviceID"], {})
-            s = lanes.get(int(r["LaneNO"]))
-            vph = None if s is None else s * (60.0 / ti.get(r["DeviceID"], 5.0))
-        else:
-            v = sec_vol.get(r["DeviceID"])
-            vph = None if v is None else v[0] * 12.0 * s_ratio
-        if vph is None:
-            missing.append((r["DeviceID"], eid + "(快照無此站的量)"))
-            continue
-        kind = classify_row(r.get("SectionName", ""))
-        e = per_edge.setdefault(eid, {"edge": eid, "devices": [], "kinds": set(),
-                                      "vd_vph": 0.0, "name": r.get("SectionName", "")})
-        e["devices"].append(r["DeviceID"])
-        e["kinds"].add(kind)
-        e["vd_vph"] += vph
-    if missing:
-        print(f"[略過] {len(missing)} 列(edge 不在路網或快照無資料):"
-              + ", ".join(f"{d}/{e}" for d, e in missing[:6])
-              + (" …" if len(missing) > 6 else ""))
+    per_edge, missing, meta = load_vd_ground_truth(
+        map_rows, edges_in_net, vd_xml=args.vd_xml, live_xml=args.live_xml,
+        fetch=args.fetch)
+    s_ratio = meta["s_ratio"]
+    device_mode = meta["device_mode"]
+    static_src, live_src = meta["static_src"], meta["live_src"]
     if not per_edge:
         sample = sorted({r.get("SumoEdgeID", "") for r in map_rows})[:4]
         sys.exit(

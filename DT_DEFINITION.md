@@ -111,6 +111,40 @@ python validate_twin_fidelity.py --sumocfg hepingeast2.sumocfg \
    腳本只把「實測站」列入主指標,其餘分開報告。**目前實測站只有 4 個 link**,
    佔比型統計意義有限 → 論文請直接報逐 link 的 GEH 並聲明 n=4。
 
+**⚠ 第三個陷阱(2026-08 實測發現):把 link counts 當成 OD 需求**
+
+`make_real_flow.py` 把每個 VD 的路段流量直接當成該 edge 的**產生量**注入。
+但 VD 量到的是**通過量**:上游 VD 量到的車開到下游會再被下游 VD 量一次,
+現實中是同一批車,模型裡卻變成兩批。加上一個站的量被鏡射/代理注入到多條 edge,
+整條走廊會被灌爆。
+
+和平東路實測(2026-08-17 快照,n=2 實測站):
+
+| edge | VD 實測 | 模擬 | 需求實現度 | GEH |
+|---|---|---|---|---|
+| 205066812#6 | 410 | 761 | **185.5%** | **14.50** |
+| 317526886#0 | 271 | 268 | 99.2% | 0.14 |
+
+拓撲檢查確認機制:`58976063#4`、`1466668326#0`、`1068183466#0`、`317526886#0`
+四條 mapping edge 的車流都會經過 `205066812#6`。注入總量約 1772 veh/h、
+SUMO 實際插入 1643 車 —— **總量級對,但空間分布錯**。
+
+標準解法是把計數當**約束**而非注入量,用 OD/route 估計反推一致的路徑集合。
+本專案以 `calibrate_flow.py`(包裝 SUMO 自帶的 `routeSampler.py`)實作:
+
+```bash
+python calibrate_flow.py --net hepingeast2.net.xml --vd-xml traffic_data/GetVD_<時間>.xml
+python validate_twin_fidelity.py --sumocfg hepingeast2.sumocfg \
+       --routes real_traffic_hep_calibrated.rou.xml --vd-xml <同一份快照> --plot
+```
+
+預設只用**實測站**當約束(鏡射/代理是建模假設,不該當量測)。
+⚠ 實測站僅 2–4 個 → 走廊需求是**欠定**的:滿足這些計數的流量組合不只一種。
+論文必須寫「以 n=N 個偵測器校正」,不可宣稱整條走廊都被量測約束。
+
+⚠ 採用校正後車流會改變車流密度 → V2V 機會與 RSU 負載改變 →
+§5.2~5.6 全部需重跑、MAPPO 需重訓。
+
 ---
 
 ## 5. 證據二:同步延遲 τ(`run_dt_delay.py`)—— 「DT vs 普通模擬」的答案
@@ -219,6 +253,8 @@ EKF-CTRV 以 `lead=τ` 做 dead-reckoning 前推,把量測補償回當下,因而
       (前者目前在 `.gitignore` 中)
 - [ ] `python validate_twin_fidelity.py --sumocfg hepingeast2.sumocfg --vd-xml <快照> --plot`
       → 保真度表進 §5.1
+- [ ] 若保真度未過關:`python calibrate_flow.py` 產校正車流,兩種車流各驗一次再擇一
+      (採用校正版則主結果全部需重跑)
 - [ ] `python run_dt_delay.py --sumo --plot` **重跑**(τ 語意已修正)→ §5.5
 - [ ] `python verify_invariants.py` → 35/35 PASS
 - [ ] 所有 mock 來源圖標註 synthetic;SUMO 圖標註場景與資料日期

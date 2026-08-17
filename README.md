@@ -113,6 +113,7 @@ VD 對應(`vd_sumo_mapping.csv`)綁定路網,`--remap` 會自動偵測重建。
 | `verify_invariants.py` | 25 項物理不變量迴歸測試 |
 | `analyze_offloading.py` | 單任務 oracle:各層何時勝出、交叉點、Pareto 圖 |
 | `validate_twin_fidelity.py` | **孿生保真度**:VD 實測 vs SUMO 模擬流量的 GEH/MAPE/RMSE |
+| `calibrate_flow.py` | **車流校正**:以 VD 計數為約束、經 `routeSampler` 反推一致路徑集合 |
 | ~~`realtime_calibrator.py`~~ | LEGACY:即時 calibrator(Digital Shadow 原型),仍綁舊場景、未接管線 |
 | ~~`dt_state_extractor.py`~~ | LEGACY:早期狀態萃取原型,已被 `vec_env_ma.py` 取代 |
 
