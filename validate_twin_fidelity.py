@@ -195,13 +195,23 @@ def parse_sumocfg(path):
 
 def net_edge_ids(net_path):
     """不依賴 sumolib,直接從 .net.xml 取 edge id(略過內部 edge)。"""
-    ids = set()
+    ids, _ = net_edges_and_sinks(net_path)
+    return ids
+
+
+def net_edges_and_sinks(net_path):
+    """回傳 (所有 edge id, 邊界出口 edge id)。邊界出口 = 沒有任何出向 connection,
+    車輛在該 edge 結束行程 → edgeData 記為 arrived 而非 left。"""
+    ids, has_out = set(), set()
     with open_xml(net_path) as fh:
         for _, el in ET.iterparse(fh, events=("end",)):
             if el.tag == "edge" and el.get("function") != "internal":
                 ids.add(el.get("id"))
                 el.clear()
-    return ids
+            elif el.tag == "connection":
+                has_out.add(el.get("from"))
+                el.clear()
+    return ids, {e for e in ids if e not in has_out}
 
 
 def route_flow_targets(route_path):
@@ -255,7 +265,10 @@ def parse_edgedata(path, metric):
     """edgeData 輸出 → {edge_id: 計數}, 以及實際量測窗長度(秒)。
 
     metric:
-      left            駛離 edge 下游端(≈停止線前的 VD,預設)
+      left+arrived    ★預設。駛離下游端 + 在此 edge 結束行程者。
+                      邊界出口 edge 沒有下游,車輛是 arrived 而非 left,
+                      只看 left 會恆為 0 → 必須把 arrived 一起算才是通過量。
+      left            僅駛離下游端(中段 edge 用;邊界出口會低估為 0)
       entered         由上游進入(≈路段起點的 VD)
       departed        在此 edge 上被插入模擬
       entered+departed  進入 + 插入(該 edge 的總流入)
@@ -267,8 +280,8 @@ def parse_edgedata(path, metric):
         window += (e - b)
         for edge in iv.iter("edge"):
             eid = edge.get("id")
-            if metric == "entered+departed":
-                v = (_fnum(edge.get("entered")) or 0.0) + (_fnum(edge.get("departed")) or 0.0)
+            if "+" in metric:
+                v = sum(_fnum(edge.get(k)) or 0.0 for k in metric.split("+"))
             else:
                 v = _fnum(edge.get(metric)) or 0.0
             counts[eid] = counts.get(eid, 0.0) + v
@@ -404,9 +417,11 @@ def main():
     p.add_argument("--vd-xml", help="GetVD.xml 快照(路段級 TotalVol);離線驗證用")
     p.add_argument("--live-xml", help="GetVDDATA.xml 快照(設備級,算全市小客車比例)")
     p.add_argument("--fetch", action="store_true", help="現抓台北開放資料(需連線)")
-    p.add_argument("--metric", default="left",
-                   choices=["left", "entered", "departed", "entered+departed"],
-                   help="模擬流量取哪個 edgeData 欄位(預設 left=駛離下游端)")
+    p.add_argument("--metric", default="left+arrived",
+                   choices=["left+arrived", "left", "entered", "departed",
+                            "entered+departed"],
+                   help="模擬流量取哪個 edgeData 欄位(預設 left+arrived:"
+                        "邊界出口 edge 的車輛是 arrived 而非 left)")
     p.add_argument("--warmup", type=float, default=300.0, help="暖機秒數(不計入量測)")
     p.add_argument("--duration", type=float, default=3600.0, help="量測窗秒數")
     p.add_argument("--seeds", type=int, default=1, help="重複跑幾個 seed 取平均")
@@ -431,7 +446,7 @@ def main():
             sys.exit(f"[錯誤] 找不到 {f}(場景檔案不齊)")
     print(f"場景:net={net}  routes={routes}  additional={adds or '(無)'}")
 
-    edges_in_net = net_edge_ids(net)
+    edges_in_net, sink_edges = net_edges_and_sinks(net)
     targets, flow_end = route_flow_targets(routes)
     print(f"路網 {len(edges_in_net)} 條 edge;車流檔 {len(targets)} 條起始 edge、"
           f"flow 結束於 t={flow_end:.0f}s")
@@ -578,6 +593,7 @@ def main():
         kinds = e["kinds"]
         kind = kinds.pop() if len(kinds) == 1 else "mixed"
         sim_vph = sim_counts.get(eid, 0.0) * scale
+        is_sink = eid in sink_edges
         rows.append({
             "edge": eid,
             "device": "+".join(sorted(set(e["devices"]))),
@@ -591,6 +607,7 @@ def main():
                         if e["vd_vph"] > 0 else float("nan")),
             "demand_realized_pct": (100.0 * sim_vph / targets[eid]
                                     if targets.get(eid) else float("nan")),
+            "is_sink_edge": is_sink,
         })
 
     head = rows if args.all_rows else [r for r in rows if r["kind"] == "measured"]
@@ -622,6 +639,14 @@ def main():
         if summ["n"] < 10:
             print(f"  ⚠ 樣本數僅 {summ['n']} 個 link,GEH 佔比統計意義有限;"
                   f"論文請直接報逐 link 的 GEH,並聲明 n。")
+    _sinks = [r["edge"] for r in rows if r["is_sink_edge"]]
+    if _sinks:
+        print(f"\n  註:{len(_sinks)} 條為『邊界出口 edge』(無下游,車輛在此結束行程):"
+              f"{', '.join(_sinks)}")
+        print(f"     通過量必須含 arrived(本次 metric='{args.metric}');"
+              f"改用 --metric left 會恆為 0。")
+        print("     它們也無法被指派 flow(無可達出口)→ 目標量為 0,"
+              "流量全部來自上游穿越。")
     if teleports:
         print(f"\n  ⚠ 模擬過程發生 {teleports} 次 teleport(壅塞到車輛被瞬移),"
               f"表示部分路段需求超過通行能力 → 會壓低該 edge 的模擬流量。")
