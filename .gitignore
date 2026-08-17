@@ -33,3 +33,8 @@ dt_snapshot.png
 action_prob_diag.json
 density_compare.json
 _dens_*.sumocfg
+
+# 孿生保真度驗證的中間產物(最終的 twin_fidelity.csv/json 建議隨論文一起入庫)
+edgeData_twinval.xml
+twin_validation.add.xml
+twin_validation_stats.xml
