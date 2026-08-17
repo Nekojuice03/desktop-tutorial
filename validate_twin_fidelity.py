@@ -69,6 +69,19 @@ def fetch_gz(url, timeout=30):
     return data.decode("utf-8", errors="ignore")
 
 
+def archive_snapshot(text, prefix):
+    """把現抓的 VD 快照存進 traffic_data/,論文才可重現。回傳存檔路徑。"""
+    from datetime import datetime
+    d = os.path.join(SCRIPT_DIR, "traffic_data")
+    os.makedirs(d, exist_ok=True)
+    fp = os.path.join(d, f"{prefix}_{datetime.now():%Y%m%d_%H%M%S}.xml")
+    with open(fp, "w", encoding="utf-8") as f:
+        f.write(text)
+    print(f"[存檔] 快照已保存 {os.path.relpath(fp, SCRIPT_DIR)}"
+          f"(請與論文一起歸檔,否則保真度數字無法重現)")
+    return fp
+
+
 def read_maybe_gz(path):
     with open(path, "rb") as f:
         data = f.read()
@@ -443,14 +456,17 @@ def main():
 
     # 全市小客車比例(路段模式換算用)
     live_text = None
+    live_src = args.live_xml
     if args.live_xml:
         live_text = read_maybe_gz(args.live_xml)
     elif args.fetch:
         live_text = fetch_gz(LIVE_VD_URL)
+        live_src = archive_snapshot(live_text, "VD")
     else:
         cands = sorted(glob.glob(os.path.join(SCRIPT_DIR, "traffic_data", "VD_*.xml")))
         if cands:
             live_text = read_maybe_gz(cands[-1])
+            live_src = cands[-1]
             print(f"[預設] 全市小客車比例取自最新歷史快照 {os.path.basename(cands[-1])}")
     if live_text is None:
         sys.exit("[錯誤] 需要設備級快照才能算全市小客車比例;"
@@ -461,16 +477,27 @@ def main():
     devs = {r["DeviceID"] for r in map_rows}
     device_mode = bool(devs & set(sv))
     sec_vol = {}
+    static_src = None
     if not device_mode:
         static_text = None
+        static_src = args.vd_xml
         if args.vd_xml:
             static_text = read_maybe_gz(args.vd_xml)
         elif args.fetch:
             static_text = fetch_gz(STATIC_VD_URL)
+            static_src = archive_snapshot(static_text, "GetVD")
         if static_text is None:
-            sys.exit("[錯誤] 本對應表為『路段模式』(SectionId),需要 GetVD.xml 快照才有 "
-                     "TotalVol 地真。請用 --vd-xml 指定快照,或 --fetch 現抓。\n"
-                     "       ※ 建議存檔一份快照再驗證,論文才可重現。")
+            sys.exit(
+                "[錯誤] 本對應表為『路段模式』(SectionId),需要路段級 GetVD.xml 快照\n"
+                "       才有 TotalVol 地真。traffic_data/ 現有的 VD_*.xml 是設備級\n"
+                "       (GetVDDATA,V 開頭 DeviceID),不含 SectionId → 不能當地真。\n"
+                "\n"
+                "       解法一(建議):現抓並自動存檔\n"
+                "         python validate_twin_fidelity.py --sumocfg hepingeast2.sumocfg "
+                "--fetch --plot\n"
+                "       解法二:已有快照檔時指定路徑(注意 PowerShell 不要留角括號)\n"
+                "         python validate_twin_fidelity.py --sumocfg hepingeast2.sumocfg "
+                "--vd-xml traffic_data\\GetVD_20260817_1200.xml --plot")
         sec_vol = parse_section_totalvol(static_text)
         print(f"[路段模式] 快照含 {len(sec_vol)} 個路段的 TotalVol;"
               f"地真 = TotalVol × 12 × {s_ratio:.3f}")
@@ -608,7 +635,10 @@ def main():
         "measure_window_s": [begin, end], "metric": args.metric,
         "seeds": n_seeds, "s_ratio": s_ratio,
         "ground_truth": "device" if device_mode else "section",
-        "vd_snapshot": args.vd_xml or ("live" if args.fetch else None),
+        "vd_snapshot": (os.path.relpath(static_src, SCRIPT_DIR)
+                        if not device_mode and static_src else None),
+        "device_snapshot": (os.path.relpath(live_src, SCRIPT_DIR)
+                            if live_src else None),
         "teleports": teleports,
         "headline_scope": "all" if args.all_rows else "measured_only",
         "summary": summ, "links": rows,

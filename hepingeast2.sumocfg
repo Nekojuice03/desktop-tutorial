@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   和平東路二段/復興南路場景(論文主場景)——「三件套對齊」的單一事實來源。
+
   倉庫裡的 osm.sumocfg 仍指向舊的忠孝東路小十字路網(osm.net.xml.gz +
-  real_traffic.rou.xml),那是造成「場景錯配」的來源;要跑本專案的正式實驗
-  請一律用這個檔,或用 --sumocfg hepingeast2.sumocfg 明確指定。
+  real_traffic.rou.xml),那是造成「場景錯配」的來源。正式實驗請一律用
+  本檔,或在指令中明確指定本檔。
+
+  注意:XML 註解內不可出現連續兩個減號,故本段一律以文字描述參數。
 
   route-files 由 make_real_flow.py 產生(未入庫,見 .gitignore):
-    python make_real_flow.py --net hepingeast2.net.xml
-  additional 的 rsu.add.xml 由 setup_rsu.py 產生:
-    python setup_rsu.py --net hepingeast2.net.xml --mode junction --corners 2
+      python make_real_flow.py 並指定 net 為 hepingeast2.net.xml
+  additional 的 rsu.add.xml 由 setup_rsu.py 產生(junction 模式、每路口 2 角):
+      python setup_rsu.py 並指定 net 為 hepingeast2.net.xml
 -->
 <sumoConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/sumoConfiguration.xsd">
