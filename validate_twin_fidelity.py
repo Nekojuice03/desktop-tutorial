@@ -509,6 +509,48 @@ def plot_fidelity(rows, summ, tag, out_path):
 
 
 # ── 主流程 ────────────────────────────────────────────────────────
+def check_snapshot(args):
+    """列出對應表各站在快照中的資料狀況 —— 用來挑「實測站最齊」的那份快照。"""
+    map_rows = read_mapping(args.mapping)
+    if args.vd_xml:
+        text, src = read_maybe_gz(args.vd_xml), args.vd_xml
+    elif args.fetch:
+        text = fetch_gz(STATIC_VD_URL)
+        src = archive_snapshot(text, "GetVD")
+    else:
+        cands = sorted(glob.glob(os.path.join(SCRIPT_DIR, "traffic_data", "GetVD_*.xml")))
+        if not cands:
+            sys.exit("[錯誤] traffic_data/ 沒有 GetVD_*.xml 快照;"
+                     "請用 --vd-xml 指定,或加 --fetch 現抓")
+        text, src = read_maybe_gz(cands[-1]), cands[-1]
+        print(f"[預設] 使用最新快照 {os.path.basename(src)}")
+    sec = parse_section_totalvol(text)
+    print(f"快照 {os.path.basename(src)}:含 {len(sec)} 個路段的 TotalVol\n")
+
+    print(f"{'DeviceID':<10}{'站別':<12}{'edge':<18}{'TotalVol':>9}  狀況")
+    ok_measured = 0
+    for r in map_rows:
+        dev = r["DeviceID"]
+        kind = classify_row(r.get("SectionName", ""))
+        v = sec.get(dev)
+        if v is None:
+            state = "✗ 快照中查無此站的 TotalVol"
+            vol = "-"
+        else:
+            state = "✓ 有資料"
+            vol = f"{v[0]:.0f}"
+            if kind == "measured":
+                ok_measured += 1
+        print(f"{dev:<10}{KIND_LABEL.get(kind, kind):<12}{r['SumoEdgeID']:<18}"
+              f"{vol:>9}  {state}")
+
+    n_meas = sum(1 for r in map_rows if classify_row(r.get("SectionName", "")) == "measured")
+    print(f"\n實測站:{ok_measured}/{n_meas} 有資料 → 本份快照可用的主指標 n={ok_measured}")
+    if ok_measured < n_meas:
+        print("  提示:台北 VD 偶有缺站。多抓幾份(--fetch)再挑 n 最大的一份;")
+        print("       若某站在多份快照中都缺,代表該站長期不回報,應在論文中聲明。")
+
+
 def main():
     p = argparse.ArgumentParser(description="孿生保真度驗證(GEH/MAPE)")
     p.add_argument("--sumocfg", default="osm.sumocfg", help="場景設定(取 net/rou/add)")
@@ -529,10 +571,17 @@ def main():
     p.add_argument("--no-run", action="store_true", help="不跑 SUMO,沿用既有 edgeData")
     p.add_argument("--all-rows", action="store_true",
                    help="把鏡射/代理站也列入主指標(預設不列,避免循環論證)")
+    p.add_argument("--check-snapshot", action="store_true",
+                   help="只檢查快照裡各 VD 站有無資料(不跑 SUMO、不覆蓋任何輸出),"
+                        "用來從多份快照挑實測站最齊的一份")
     p.add_argument("--plot", action="store_true")
     args = p.parse_args()
 
     os.chdir(SCRIPT_DIR)
+
+    if args.check_snapshot:
+        check_snapshot(args)
+        return
 
     # 1) 場景 --------------------------------------------------------
     cfg = parse_sumocfg(args.sumocfg) if os.path.exists(args.sumocfg) else {}
@@ -588,6 +637,12 @@ def main():
     if args.no_run:
         if not os.path.exists(EDGEDATA_FILE):
             sys.exit(f"[錯誤] --no-run 但找不到 {EDGEDATA_FILE}")
+        try:
+            if os.path.getmtime(EDGEDATA_FILE) < os.path.getmtime(routes):
+                print(f"  ⚠ {EDGEDATA_FILE} 比 {routes} 舊 —— 這份模擬結果不是"
+                      f"這個車流檔跑出來的,比較會失真。請拿掉 --no-run 重跑。")
+        except OSError:
+            pass
         print(f"[--no-run] 沿用既有 {EDGEDATA_FILE}")
         sim_counts, window = parse_edgedata(EDGEDATA_FILE, args.metric)
         n_seeds, teleports = 1, None
