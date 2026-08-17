@@ -62,8 +62,14 @@ class VECMultiEnv:
           "fail" = 直接失敗(最保守)
           "v2i"  = 結果經 V2I 遷移接續(執行車→RSU→持有車)，付遷移延遲/能耗
         obs_delay：★數位孿生同步延遲 τ(tick)。孿生收到的車輛動態(BSM 位置/
-          速度/航向)比物理世界舊 τ 秒 → 預判器與 contact 觀測特徵都吃舊資料；
-          物理結算(真實位置驗證)不受影響。τ=0 為完美同步(預設，行為不變)。
+          速度/航向)比物理世界舊 τ 秒。★決策側一律讀孿生視角(twin_states)：
+          鄰居發現與排序、最近基站判定、觀測中的距離特徵、contact 預判、
+          KF 量測，全部吃 τ 秒前的資料；物理側(實際無線傳輸距離、完成時刻
+          的真實位置結算)一律讀 veh_states。因此孿生過期會造成三種後果：
+            (1) 選錯目標 → 實際送不到(計入 stale_miss)
+            (2) 預判失準 → 執行期真實斷線(link_break)
+            (3) 過度保守 → 誤殺可行的卸載(pred_reject)
+          τ=0 時 twin_states 與 veh_states 為同一份 → 行為與無孿生層完全相同。
           用途：量化 DT 同步性需求(run_dt_delay.py 掃描)。
         arrival_delivery：★抵達補送(消融用，預設 False=維持既有語意)。
           SUMO 實測斷線主因為「車主抵達目的地離開模擬(consumer_left)」——
@@ -182,28 +188,48 @@ class VECMultiEnv:
 
     # ---------- 單一任務情境 ----------
     def _build_context(self, task, holder_id, holder_pos, now, hop, hop_energy=0.0):
-        # 最近基站
-        near_rsu = rsus_in_range(holder_pos, self.rsus, RSU_RANGE_M)
+        """
+        ★孿生/物理分離(DT 的核心語意)：
+          決策側(選鄰居、選基站、觀測距離、預判連線壽命)一律讀 twin_states
+          —— 孿生看到的是 τ 秒前的 BSM，選錯人是「孿生過期」的真實後果。
+          物理側(實際傳輸距離、完成時刻結算)讀 veh_states，另存為 *_pos_phys。
+        τ=0 時 twin_states 與 veh_states 是同一份 → 行為與舊版逐位元相同。
+        """
+        ts = self.twin_states
+        # 孿生看到的持有車位置(孿生尚未看過這台車 → 退回物理位置)
+        tw_holder = ts[holder_id]["pos"] if holder_id in ts else holder_pos
+        # 最近基站(以孿生視角判斷是否在覆蓋內)
+        near_rsu = rsus_in_range(tw_holder, self.rsus, RSU_RANGE_M)
         rsu_id = near_rsu[0] if near_rsu else None
         rsu_pos = (self.rsus[rsu_id]["x"], self.rsus[rsu_id]["y"]) if rsu_id else None
-        # 範圍內的其他 server(依距離排序)
-        others = {sid: self.veh_states[sid]["pos"] for sid in self.servers
-                  if sid != holder_id and sid in self.veh_states}
-        nbrs = neighbors_in_range(holder_pos, others, V2V_RANGE_M)
+        # 範圍內的其他 server(依孿生看到的距離排序)。孿生還沒看過的車不列入候選。
+        others = {sid: ts[sid]["pos"] for sid in self.servers
+                  if sid != holder_id and sid in ts}
+        nbrs = neighbors_in_range(tw_holder, others, V2V_RANGE_M)
         near_id = nbrs[0] if nbrs else None
-        near_pos = self.veh_states[near_id]["pos"] if near_id else None
+        near_pos = ts[near_id]["pos"] if near_id else None
         # 範圍內最近的『強車』
         strong_nbrs = [s for s in nbrs if s in self.strong]
         strong_id = strong_nbrs[0] if strong_nbrs else None
-        strong_pos = self.veh_states[strong_id]["pos"] if strong_id else None
-        return {"task": task, "holder_id": holder_id, "holder_pos": holder_pos,
+        strong_pos = ts[strong_id]["pos"] if strong_id else None
+        return {"task": task, "holder_id": holder_id,
+                "holder_pos": tw_holder,          # 孿生視角(觀測/預判)
+                "holder_pos_phys": holder_pos,    # 物理真值(傳輸/結算)
                 "now": now, "hop": hop, "hop_energy": hop_energy,
                 "holder_strong": holder_id in self.strong,
-                "rsu_id": rsu_id, "rsu_pos": rsu_pos,
+                "rsu_id": rsu_id, "rsu_pos": rsu_pos,   # 基站靜止 → 兩視角相同
                 "near_id": near_id, "near_pos": near_pos,
+                "near_pos_phys": self._phys_pos(near_id, near_pos),
                 "near_strong": near_id in self.strong if near_id else False,
                 "strong_id": strong_id, "strong_pos": strong_pos,
+                "strong_pos_phys": self._phys_pos(strong_id, strong_pos),
                 "n_nbrs": len(nbrs)}
+
+    def _phys_pos(self, vid, fallback):
+        """該車此刻的物理位置；已離場(孿生仍看得到)時退回孿生位置。"""
+        if vid is not None and vid in self.veh_states:
+            return self.veh_states[vid]["pos"]
+        return fallback
 
     def _obs_of(self, ctx):
         task, pos, now = ctx["task"], ctx["holder_pos"], ctx["now"]
@@ -314,10 +340,14 @@ class VECMultiEnv:
         self.stats["generated"] += len(new_tasks)
 
         assign = {}
+        ts = self.twin_states
         for task in new_tasks:
-            cpos = veh_states[task.source]["pos"]
-            others = {sid: p for sid, p in self.servers.items() if sid != task.source}
-            nbrs = neighbors_in_range(cpos, others, V2V_RANGE_M)
+            cpos = veh_states[task.source]["pos"]                 # 物理(實際傳輸)
+            tw_cpos = ts[task.source]["pos"] if task.source in ts else cpos   # 孿生(選人)
+            # 孿生視角挑鄰居：孿生還沒看過的車不在候選內
+            others = {sid: ts[sid]["pos"] for sid in self.servers
+                      if sid != task.source and sid in ts}
+            nbrs = neighbors_in_range(tw_cpos, others, V2V_RANGE_M)
             if nbrs and nbrs[0] not in assign:
                 sid = nbrs[0]
                 hop_tx = transmission_delay(task.data_bits,
@@ -374,19 +404,25 @@ class VECMultiEnv:
 
     # ---------- 結算單一決策 → 獎勵 ----------
     def _resolve_one(self, ctx, action):
+        # pos=孿生視角(預判/觀測)、pos_phys=物理真值(實際無線傳輸距離)
         task, now, pos = ctx["task"], ctx["now"], ctx["holder_pos"]
+        pos_phys = ctx["holder_pos_phys"]
         kind = MA_ACTIONS[action]
 
         if kind == "local":
-            tid, tpos, reach = ctx["holder_id"], None, True
+            tid, tpos, tpos_phys, reach = ctx["holder_id"], None, None, True
         elif kind == "v2v_strong":
-            tid, tpos, reach = ctx["strong_id"], ctx["strong_pos"], ctx["strong_id"] is not None
+            tid, tpos, tpos_phys = ctx["strong_id"], ctx["strong_pos"], ctx["strong_pos_phys"]
+            reach = ctx["strong_id"] is not None
         elif kind == "v2v_near":
-            tid, tpos, reach = ctx["near_id"], ctx["near_pos"], ctx["near_id"] is not None
+            tid, tpos, tpos_phys = ctx["near_id"], ctx["near_pos"], ctx["near_pos_phys"]
+            reach = ctx["near_id"] is not None
         elif kind == "rsu":
-            tid, tpos, reach = ctx["rsu_id"], ctx["rsu_pos"], ctx["rsu_id"] is not None
+            tid, tpos, tpos_phys = ctx["rsu_id"], ctx["rsu_pos"], ctx["rsu_pos"]
+            reach = ctx["rsu_id"] is not None
         else:  # cloud
-            tid, tpos, reach = "cloud", ctx["rsu_pos"], ctx["rsu_id"] is not None
+            tid, tpos, tpos_phys = "cloud", ctx["rsu_pos"], ctx["rsu_pos"]
+            reach = ctx["rsu_id"] is not None
 
         w = task.priority if self.priority_aware else 1.0
         self.stats["by_target"][kind] = self.stats["by_target"].get(kind, 0) + 1
@@ -402,8 +438,10 @@ class VECMultiEnv:
         # ★預判層(proactive)：預測「完成前就會斷線」→ 拒絕此卸載(admission control)。
         #   predictor="route" 時用路線分歧修正路口高估(文獻: link lifetime prediction)。
         contact_s = self._contact_for(ctx, kind, tid, tpos)
-        r = estimate(task, est_kind, now, pos, self.nodes,
-                     target_id=tid, target_pos=tpos, commit=True,
+        # ★預判吃孿生視角(contact_s)，但實際傳輸走物理真值(pos_phys/tpos_phys)：
+        #   孿生過期選錯目標時，這裡就會真的送不到 —— 不會被樂觀的舊資料掩蓋。
+        r = estimate(task, est_kind, now, pos_phys, self.nodes,
+                     target_id=tid, target_pos=tpos_phys, commit=True,
                      contact_s=contact_s)
         if not r["feasible"]:
             self.stats["fail"] += 1
@@ -411,6 +449,11 @@ class VECMultiEnv:
                 self.stats["pred_reject"] += 1   # 被「預判」擋下(非執行期真實斷線)
             else:
                 self.stats["infeasible"] += 1
+                # 孿生看得到、物理已出範圍 → 這一筆失敗直接歸因於孿生過期
+                if tpos is not None and tpos_phys is not None:
+                    rng = V2V_RANGE_M if est_kind == "v2v" else RSU_RANGE_M
+                    if distance(pos, tpos) <= rng < distance(pos_phys, tpos_phys):
+                        self.stats["stale_miss"] += 1
             self._record_kind(task.kind, False)
             self.stats["wsum"] += task.priority
             return -w * PENALTY_FAIL
@@ -674,6 +717,7 @@ class VECMultiEnv:
                       "consumer_left": 0,    # 車主離場事件數(≤ link_break)
                       "arrival_delivered": 0,  # 其中經「抵達補送」救回者(break_recovered 子類)
                       "rsu_handover": 0,     # RSU/雲結果經「換手」由新服務基站送達(非斷線)
+                      "stale_miss": 0,       # ★孿生過期直接害死的卸載(孿生內、物理外)
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
                       "cost_sum": 0.0, "by_target": {},
@@ -771,6 +815,7 @@ class VECMultiEnv:
                 "consumer_left": s["consumer_left"],
                 "arrival_delivered": s["arrival_delivered"],
                 "rsu_handover": s["rsu_handover"],
+                "stale_miss": s["stale_miss"],
                 "fallback": s["fallback"],
                 "by_target": dict(s["by_target"])}
 

@@ -3,8 +3,11 @@
 ==========================================================================
 DT 文獻的核心議題是「孿生與物理世界的同步性」。本實驗把孿生收到的車輛
 動態(BSM)延遲 τ 秒(VECMultiEnv(obs_delay=τ))：
-  - 預判器與 contact 觀測特徵吃 τ 秒前的舊資料
-  - 物理結算(真實位置驗證)不受影響 → 舊資料造成的預判失準會變成真實斷線
+  - ★決策側全面吃舊資料:鄰居發現/排序、最近基站判定、觀測距離特徵、
+    contact 預判、KF 量測
+  - 物理側(實際傳輸距離、完成時刻的真實位置結算)不受影響
+  → 孿生過期的三種後果:選錯目標送不到(stale_miss)、預判失準真斷線
+    (link_break)、過度保守誤殺(pred_reject)
 
 預期敘事(論文)：
   τ↑ → linear 預判劣化最快(直接外推舊狀態)；
@@ -105,7 +108,7 @@ def main():
         for pred in PREDICTORS:
             print(f"\n── 策略 {pol} × 預判 {pred} ──")
             print(f"  {'τ(s)':>5}{'成功率%':>8}{'vision%':>8}{'延遲ms':>8}"
-                  f"{'預判拒':>7}{'斷線':>5}{'救回':>5}{'損失':>5}")
+                  f"{'預判拒':>7}{'斷線':>5}{'救回':>5}{'損失':>5}{'過期':>5}")
             for tau in TAUS:
                 env = VECMultiEnv(**base_cfg, predictor=pred, obs_delay=tau)
                 r = run_episodes(env, pol, algo=algo, episodes=episodes)
@@ -113,7 +116,8 @@ def main():
                 results[f"{pol}/{pred}/tau{tau}"] = r
                 print(f"  {tau:5d}{r['success']:8.1f}{r['vision']:8.1f}"
                       f"{r['latency']:8.0f}{r['pred_reject']:7d}{r['link_break']:5d}"
-                      f"{r['break_recovered']:5d}{r['break_failed']:5d}")
+                      f"{r['break_recovered']:5d}{r['break_failed']:5d}"
+                      f"{r.get('stale_miss', 0):5d}")
 
     out = os.path.join(SCRIPT_DIR, "dt_delay_results.json")
     with open(out, "w", encoding="utf-8") as f:

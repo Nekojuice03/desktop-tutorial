@@ -33,7 +33,8 @@ COMBOS = [("linear", "fail", False), ("linear", "v2i", False),
           ("route", "fail", False), ("route", "v2i", False),
           ("route", "v2i", True)]
 EVENT_KEYS = ("pred_reject", "link_break", "break_recovered", "break_failed",
-              "consumer_left", "arrival_delivered", "rsu_handover")
+              "consumer_left", "arrival_delivered", "rsu_handover",
+              "stale_miss")   # ★孿生過期直接害死的卸載(obs_delay>0 才會非零)
 
 
 def run_episodes(env, mode, algo=None, episodes=6, seed0=2000):

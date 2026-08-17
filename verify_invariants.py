@@ -152,7 +152,7 @@ check("轉彎預判：對方開始轉彎 → 預測 contact 明顯縮短",
       c_turn < c_str * 0.7, f"直行 {c_str:.0f}s vs 轉彎 {c_turn:.0f}s")
 
 print("\n=== [7] 環境層(帳務與觀測) ===")
-from vec_env_ma import VECMultiEnv
+from vec_env_ma import VECMultiEnv, MA_ACTIONS
 env = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                   episode_ticks=200, task_cpu_scale=1.0)
 obs, state = env.reset(seed=42)
@@ -173,6 +173,9 @@ check("帳務：fail = miss + infeasible + pred_reject + break_failed",
       + st["pred_reject"] + st["break_failed"])
 check("帳務：link_break = recovered + failed",
       s["link_break"] == s["break_recovered"] + s["break_failed"])
+check("帳務：stale_miss ≤ infeasible(孿生過期為不可達的子類)",
+      st["stale_miss"] <= st["infeasible"],
+      f"{st['stale_miss']} ≤ {st['infeasible']}")
 check("帳務：consumer_left ≤ link_break(車主離場為斷線事件子類)",
       s["consumer_left"] <= s["link_break"])
 check("加權成功率存在且介於 0~1",
@@ -220,6 +223,58 @@ check("抵達補送：車主離場經 RSU 補送成功且計數正確",
 env_ad.close()
 check("回合有實際處理任務(>200)", st["latency_n"] > 200, f"{st['latency_n']} 筆")
 env.close()
+
+# ---------------------------------------------------------------- [8] 數位孿生
+print("\n=== [8] 孿生/物理分離(DT 同步延遲 τ) ===")
+
+# τ=0：孿生即物理 → 完美同步,行為必須與「無孿生層」完全一致
+env_t0 = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24,
+                     server_ratio=0.45, episode_ticks=30, obs_delay=0)
+env_t0.reset(seed=7)
+check("τ=0：孿生狀態 == 物理狀態(完美同步)",
+      env_t0.twin_states is env_t0.veh_states
+      or env_t0.twin_states == env_t0.veh_states)
+_ctx0 = env_t0._active[0][1] if env_t0._active else None
+check("τ=0：ctx 的孿生位置 == 物理位置",
+      _ctx0 is None or _ctx0["holder_pos"] == _ctx0["holder_pos_phys"])
+env_t0.close()
+
+# τ>0：孿生落後 → 決策側位置必須真的與物理不同(否則 τ 是裝飾品)
+env_t8 = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24,
+                     server_ratio=0.45, episode_ticks=60, obs_delay=8)
+env_t8.reset(seed=7)
+for _ in range(20):
+    o = np.stack([env_t8._obs_of(c) for _, c in env_t8._active]) \
+        if env_t8._active else np.zeros((0, env_t8.n_features), np.float32)
+    _, _, _, _d, _ = env_t8.step(np.zeros(o.shape[0], dtype=np.int64))
+    if _d:
+        break
+_gap = [_m.dist(env_t8.twin_states[v]["pos"], env_t8.veh_states[v]["pos"])
+        for v in env_t8.twin_states if v in env_t8.veh_states]
+check("τ=8：孿生與物理位置確實存在落差(決策吃到舊資料)",
+      bool(_gap) and max(_gap) > 1.0,
+      f"最大落差 {max(_gap):.1f} m" if _gap else "無共同車輛")
+_ctx8 = env_t8._active[0][1] if env_t8._active else None
+check("τ>0：ctx 同時帶孿生位置與物理位置兩份",
+      _ctx8 is None or ("holder_pos" in _ctx8 and "holder_pos_phys" in _ctx8))
+env_t8.close()
+
+# 孿生過期直接害死的卸載：孿生看得到、物理已出範圍 → 計入 stale_miss
+env_sm = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24,
+                     server_ratio=0.45, episode_ticks=10, obs_delay=2)
+env_sm.reset(seed=1)
+_ctx = dict(env_sm._active[0][1])
+_ctx["strong_id"] = "phantom"
+_ctx["strong_pos"] = (0.0, 0.0)            # 孿生:就在旁邊(範圍內)
+_ctx["strong_pos_phys"] = (9e4, 0.0)       # 物理:早就開走(遠超 V2V 覆蓋)
+_ctx["holder_pos"] = (0.0, 0.0)
+_ctx["holder_pos_phys"] = (0.0, 0.0)
+_sm0 = env_sm.stats["stale_miss"]
+env_sm._resolve_one(_ctx, MA_ACTIONS.index("v2v_strong"))
+check("孿生過期造成的不可達計入 stale_miss",
+      env_sm.stats["stale_miss"] - _sm0 == 1,
+      f"+{env_sm.stats['stale_miss'] - _sm0}")
+env_sm.close()
 
 print("\n" + "=" * 60)
 fails = [n for n, ok, _ in RESULTS if not ok]
