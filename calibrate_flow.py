@@ -23,6 +23,9 @@ make_real_flow.py 的作法是把每個 VD 的路段流量直接當成該 edge �
          --vd-xml traffic_data/GetVD_20260817_140317.xml --plot
 
 產出:real_traffic_hep_calibrated.rou.xml、flow_counts.xml(約束檔)
+
+備註:--optimize 需要 scipy(pip install scipy)。沒裝會自動略過,
+仍會產出可用車流,只是與計數的契合度可能較差。
 """
 import argparse
 import os
@@ -77,16 +80,25 @@ def supported_flags(script_path):
         return set()
 
 
-def run(cmd, what):
+def run(cmd, what, check=True):
     print(f"\n── {what} ──")
     print("  $ " + " ".join(str(c) for c in cmd))
     r = subprocess.run(cmd, cwd=SCRIPT_DIR, capture_output=True, text=True)
     out = (r.stdout or "") + (r.stderr or "")
     if out.strip():
         print("\n".join("  " + ln for ln in out.strip().splitlines()[-40:]))
-    if r.returncode != 0:
+    if r.returncode != 0 and check:
         sys.exit(f"[錯誤] {what} 失敗(returncode={r.returncode})")
-    return out
+    return r.returncode, out
+
+
+def has_scipy():
+    """routeSampler 的 --optimize 需要 scipy;沒有就別把那個旗標送出去。"""
+    try:
+        import scipy  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 # ── 約束檔 ────────────────────────────────────────────────────────
@@ -205,13 +217,34 @@ def main():
            "--seed", str(args.seed)]
     if "--edgedata-attribute" in rs_flags:
         cmd += ["--edgedata-attribute", "count"]
-    if args.optimize and args.optimize != "none" and "--optimize" in rs_flags:
+    want_opt = (args.optimize and args.optimize != "none"
+                and "--optimize" in rs_flags)
+    if want_opt and not has_scipy():
+        print("\n  ⚠ 未安裝 scipy → routeSampler 的 --optimize 無法使用,本次略過。")
+        print("     不最佳化仍會產出可用車流,只是與計數的契合度可能較差。")
+        print("     想要更好的契合度:pip install scipy 之後重跑。")
+        want_opt = False
+    if want_opt:
         cmd += ["--optimize", args.optimize]
     if args.total_count and "--total-count" in rs_flags:
         cmd += ["--total-count", str(args.total_count)]
     if "--verbose" in rs_flags:
         cmd.append("--verbose")
-    out = run(cmd, "routeSampler:挑選滿足計數的路徑組合")
+    rc, out = run(cmd, "routeSampler:挑選滿足計數的路徑組合", check=False)
+    if rc != 0 and "--optimize" in cmd:
+        # 有些版本即使 scipy 存在也可能在最佳化階段失敗 → 退回不最佳化再試一次
+        print("\n  ⚠ 帶 --optimize 失敗,改用不最佳化重試")
+        i = cmd.index("--optimize")
+        cmd = cmd[:i] + cmd[i + 2:]
+        rc, out = run(cmd, "routeSampler(不最佳化)", check=False)
+    if rc != 0:
+        sys.exit("[錯誤] routeSampler 失敗。常見原因:\n"
+                 "       - 候選路徑沒有涵蓋到被約束的 edge → 加大 --candidates\n"
+                 "         或調整 --fringe-factor\n"
+                 "       - 計數彼此矛盾(不同時刻的快照混用)\n"
+                 "       把上面的訊息貼出來比較好判斷。")
+    if not os.path.exists(args.out):
+        sys.exit(f"[錯誤] routeSampler 回報成功但沒有產出 {args.out}")
 
     # routeSampler 自己會報 GEH,把關鍵行抓出來再講一次
     hits = [ln.strip() for ln in out.splitlines()
