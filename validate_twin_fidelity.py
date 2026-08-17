@@ -316,10 +316,21 @@ def read_mapping(path):
 
 
 def route_flow_targets(route_path):
-    """rou.xml → {edge_id: 指定的 vehsPerHour 總和}, 以及 flow 的最大 end 時刻。"""
+    """rou.xml → ({edge_id: 目標 veh/h}, 車流結束時刻)。
+
+    兩種車流檔都要支援:
+      flow 式(make_real_flow.py):目標 = 該 edge 的 vehsPerHour 總和;
+        結束時刻 = flow 的最大 end。
+      vehicle 式(routeSampler.py 輸出):車輛各自帶完整 route。
+        目標 = 路徑經過該 edge 的車次(換算成 veh/h);
+        結束時刻 = 最大 depart。
+        ★ 沒有這一支的話,量測窗不會被截到車流結束時刻,尾端空窗會把
+          小時流量系統性低估(實測約 6~8%)。
+    """
     targets, end_max = {}, 0.0
     with open_xml(route_path) as fh:
         root = ET.parse(fh).getroot()
+
     for fl in root.iter("flow"):
         src = fl.get("from")
         vph = _fnum(fl.get("vehsPerHour"))
@@ -328,7 +339,28 @@ def route_flow_targets(route_path):
         e = _fnum(fl.get("end"))
         if e:
             end_max = max(end_max, e)
-    return targets, end_max
+    if targets or end_max:
+        return targets, end_max
+
+    # vehicle 式:統計每條 edge 被路徑經過幾次
+    counts, dep_min, dep_max = {}, None, 0.0
+    n_veh = 0
+    for veh in root.iter("vehicle"):
+        d = _fnum(veh.get("depart"))
+        if d is not None:
+            dep_min = d if dep_min is None else min(dep_min, d)
+            dep_max = max(dep_max, d)
+        n_veh += 1
+        rt = veh.find("route")
+        if rt is None or not rt.get("edges"):
+            continue
+        for eid in rt.get("edges").split():
+            counts[eid] = counts.get(eid, 0.0) + 1.0
+    if not n_veh:
+        return {}, 0.0
+    span = max(dep_max - (dep_min or 0.0), 1.0)
+    targets = {k: v * 3600.0 / span for k, v in counts.items()}
+    return targets, dep_max
 
 
 # ── SUMO 執行 / edgeData 解析 ─────────────────────────────────────
@@ -390,15 +422,20 @@ def parse_edgedata(path, metric):
 
 
 def parse_teleports(path):
+    """→ (teleports, inserted, running, loaded, waiting)。
+
+    loaded > inserted 代表有車根本插不進路網(邊界入口壅塞),
+    該 edge 的模擬流量會被系統性低估 —— 必須讓使用者看見。
+    """
+    def _i(el, k):
+        return int(el.get(k)) if el is not None and el.get(k) else 0
     try:
         root = ET.parse(path).getroot()
-        tp = root.find(".//teleports")
-        veh = root.find(".//vehicles")
-        return (int(tp.get("total")) if tp is not None and tp.get("total") else 0,
-                int(veh.get("inserted")) if veh is not None and veh.get("inserted") else 0,
-                int(veh.get("running")) if veh is not None and veh.get("running") else 0)
+        tp, veh = root.find(".//teleports"), root.find(".//vehicles")
+        return (_i(tp, "total"), _i(veh, "inserted"), _i(veh, "running"),
+                _i(veh, "loaded"), _i(veh, "waiting"))
     except Exception:
-        return (0, 0, 0)
+        return (0, 0, 0, 0, 0)
 
 
 # ── 指標 ──────────────────────────────────────────────────────────
@@ -654,9 +691,15 @@ def main():
             print(f"\n── 執行 SUMO(seed {k}) ──")
             run_sumo(net, routes, adds + [ADD_FILE], end, seed=k)
             c, w = parse_edgedata(EDGEDATA_FILE, args.metric)
-            tp, ins, run = parse_teleports(STATS_FILE)
+            tp, ins, run, loaded, waiting = parse_teleports(STATS_FILE)
             teleports += tp
+            not_inserted = max(loaded - ins, waiting)
             print(f"  插入 {ins} 車、結束時在跑 {run} 車、teleport {tp} 次")
+            if not_inserted > 0:
+                pct = 100.0 * not_inserted / loaded if loaded else 0.0
+                print(f"  ⚠ 有 {not_inserted} 車({pct:.1f}%)插不進路網"
+                      f"(邊界入口壅塞)→ 相關 edge 的模擬流量會被低估。"
+                      f"校正車流可加大 --candidates 或分散出發時刻。")
             for eid, v in c.items():
                 acc[eid] = acc.get(eid, 0.0) + v
             window = w

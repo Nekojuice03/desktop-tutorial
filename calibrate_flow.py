@@ -199,7 +199,8 @@ def main():
            "-o", CAND_TRIPS, "-r", CAND_ROUTES,
            "-b", str(args.begin), "-e", str(args.end), "-p", f"{period:.4f}",
            "--fringe-factor", str(args.fringe_factor), "--seed", str(args.seed)]
-    for flag, val in (("--validate", None), ("--vehicle-class", "passenger")):
+    for flag, val in (("--validate", None), ("--vehicle-class", "passenger"),
+                      ("--trip-attributes", 'departLane="best" departSpeed="max"')):
         if flag in rt_flags:
             cmd.append(flag)
             if val:
