@@ -171,6 +171,16 @@ Geofabrik `taiwan-latest.osm.pbf` → `osmconvert -b="西,南,東,北"` 裁切 �
 
 ---
 
+## 7.5 數位孿生定位（新增，見 DT_DEFINITION.md）
+
+- 層級：正式管線為 **Digital Model**（離線 VD 校正）；`realtime_calibrator.py`
+  具 Digital Shadow 能力但未接管線且仍綁舊場景 → **勿宣稱 real-time / closed-loop DT**。
+- 保真度：`validate_twin_fidelity.py` 報 GEH/MAPE/RMSE；只有「實測站」列入主指標
+  （目前 n=4 link），鏡射/代理站分開報告。
+- τ 語意已修正：決策側全面讀 `twin_states`，新增 `stale_miss` 統計。
+  **`run_dt_delay.py` 需重跑**；τ=0 逐位元不變 → 主對照/收斂/多 seed/IPPO/消融不受影響。
+- ⚠ 倉庫的 `osm.sumocfg` 仍指向舊的忠孝東路路網 → 正式實驗一律用 **`hepingeast2.sumocfg`**。
+
 ## 8. 已知待辦 / 未建模（論文「假設」一節可聲明）
 
 - RSU 無線電資源競爭（多車同傳同一 RSU 各自拿滿頻寬；目前 SNR 非 SINR、無干擾）

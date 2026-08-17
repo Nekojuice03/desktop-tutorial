@@ -7,6 +7,19 @@ dt_state_extractor.py
 從 SUMO（TraCI）讀取車輛狀態，計算通道與計算資源，
 輸出多車 state vector 給 multi-agent DQN 使用。
 
+★★★ LEGACY —— 早期原型,已被 vec_env_ma.py 取代 ★★★
+    與現行主線不相容之處:
+      - RSU_LIST 寫死「忠孝東路三段×新生南路」路口四角 4 個 RSU;
+        論文主場景是和平東路二段、8 個 RSU(rsu_positions.json)
+      - 10 維單車 state;現行多代理觀測為 18 維(priority_aware 時 19 維)
+      - 自訂的簡化通道模型;現行為 comm_model.py 的 C-V2X/3GPP 鏈路預算
+        (PL → SINR → Shannon)
+      - 無孿生/物理分離(twin_states vs veh_states),不具 DT 同步延遲語意
+
+    保留原因:早期管線的紀錄。**不要在論文或口試引用本檔的參數/架構**,
+    也不要拿它產生的圖當 DT 展示。現行 DT 可視化請用 visualize_dt.py。
+    詳見 DT_DEFINITION.md §7。
+
 State vector（每輛車 10 維）:
   [0] veh_speed        車速 (m/s)，正規化 /30
   [1] veh_pos          在 edge 上的位置比例 [0,1]

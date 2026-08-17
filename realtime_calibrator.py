@@ -1,7 +1,23 @@
- """
+"""
 realtime_calibrator.py
 用 SUMO Calibrator 機制做即時數位孿生。
 參考：Kušić et al. (2023) Advanced Engineering Informatics
+
+★★★ LEGACY —— 未接入任何實驗管線,且仍綁「舊場景」★★★
+    本檔的 VD_TO_EDGE / EDGE_TO_CAL / EDGE_FLOWS 全部是舊的忠孝東路小十字
+    路網 edge ID(506322846#0 等),與論文主場景「和平東路二段」
+    (hepingeast2.net.xml、8 個 RSU)完全不同。直接執行會對不上路網。
+
+    定位:這是本專案唯一達到 Digital Shadow(實體→數位自動流)的元件,
+    但正式實驗走的是離線校正管線(make_real_flow.py 產靜態 rou.xml)。
+    論文請把它寫成 future work,不要在口試展示,否則會與主場景自相矛盾。
+    詳見 DT_DEFINITION.md §2 與 §7。
+
+    要復用到和平東路場景,需重做:
+      1. VD_TO_EDGE   → 依 vd_sumo_mapping.csv 的 Z 開頭 SectionId 重建
+      2. EDGE_TO_CAL / EDGE_FLOWS → 依 hepingeast2 的 edge 與可達出口重建
+      3. calibrators.add.xml      → 依新 edge 重新產生
+      4. SUMO_CFG     → 改為 hepingeast2.sumocfg
 
 架構：
   1. 啟動 SUMO（含 calibrators.add.xml）
@@ -25,7 +41,7 @@ if os.path.exists(SUMO_TOOLS) and SUMO_TOOLS not in sys.path:
 import traci
 
 # ── 設定 ──────────────────────────────────────────────────────────────
-SUMO_CFG        = "osm.sumocfg"
+SUMO_CFG        = "osm.sumocfg"   # ← LEGACY:舊場景;和平東路應為 hepingeast2.sumocfg
 VD_URL          = "https://tcgbusfs.blob.core.windows.net/blobtisv/GetVDDATA.xml.gz"
 UPDATE_INTERVAL = 60     # 秒
 
