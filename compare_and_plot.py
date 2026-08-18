@@ -67,7 +67,7 @@ def run_episodes(env, mode, algo=None, episodes=8, seed0=1000):
             elif mode == "random":
                 actions = rng.integers(0, env.n_actions, size=k)
             elif mode == "mappo":
-                actions = algo.act_greedy(obs)
+                actions = algo.act_greedy(obs, env.action_masks())
             else:
                 actions = np.full(k, MA_ACTIONS.index(mode), dtype=np.int64)
             rewards, obs, state, done, info = env.step(actions)

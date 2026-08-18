@@ -33,12 +33,13 @@ from run_baseline import is_server, is_strong
 # 重用 Stage A 的世界來源、正規化常數、獎勵參數
 from vec_env import (MockWorld, TraciWorld, _clip01,
                      DATA_NORM, CPU_NORM, DEAD_NORM, WAIT_NORM, CONTACT_NORM,
+                     NBR_NORM,
                      ENERGY_W, ENERGY_NORM, COST_W, PENALTY_MISS, PENALTY_FAIL,
                      SCRIPT_DIR)
 
 # 多智能體專用的動作集(5 個，V2V 拆強/近)
 MA_ACTIONS = ["local", "v2v_strong", "v2v_near", "rsu", "cloud"]
-MA_N_FEATURES = 18   # +1：回程(backhaul)佇列等待 —— agent 須看得到雲端壅塞
+MA_N_FEATURES = 19   # +1 回程佇列等待、+1 範圍內鄰居數(資源競爭程度)
 MAX_AGENTS_NORM = 20.0
 
 
@@ -276,6 +277,7 @@ class VECMultiEnv:
             nr_strong,                                # 最近鄰車本身是不是強車
             _clip01(nr_contact / CONTACT_NORM),
             _clip01(self.nodes.wait_time("backhaul", now) / WAIT_NORM),  # 回程壅塞
+            _clip01(ctx["n_nbrs"] / NBR_NORM),   # 範圍內 server 數(競爭程度)
         ] + ([_clip01(task.priority / 2.5)] if self.priority_aware else []),
             dtype=np.float32)
 
@@ -348,8 +350,18 @@ class VECMultiEnv:
             others = {sid: ts[sid]["pos"] for sid in self.servers
                       if sid != task.source and sid in ts}
             nbrs = neighbors_in_range(tw_cpos, others, V2V_RANGE_M)
-            if nbrs and nbrs[0] not in assign:
-                sid = nbrs[0]
+            # ★每台 server 每 tick 只當一個任務的 agent(RL 一 agent 一觀測)，
+            #   但「最近那台被佔用」不該讓任務直接退回本地 —— physically 客戶端
+            #   本來就能找範圍內的第二近 server。先前只試 nbrs[0]，實測造成
+            #   39% 的任務繞過策略(且全在 1GHz 弱車上跑、vision 成功率 0%)。
+            free = [n for n in nbrs if n not in assign]
+            if not free:
+                # 歸因:附近完全沒有 server,還是有但本 tick 全被佔用(真實飽和)?
+                # 這兩者的意義不同 —— 前者是佈署密度不足,後者是每 tick 每 server
+                # 只當一個 agent 的結構上限。論文談 fallback 時要能分開講。
+                self.stats["fb_no_server" if not nbrs else "fb_saturated"] += 1
+            if free:
+                sid = free[0]
                 hop_tx = transmission_delay(task.data_bits,
                                             distance(cpos, self.servers[sid]), V2V_LINK)
                 if hop_tx == INF:
@@ -674,6 +686,22 @@ class VECMultiEnv:
         self._fail_tail(f)
 
     # ---------- 介面 ----------
+    def action_masks(self):
+        """每個 agent 的合法動作遮罩 [k, n_actions](True=可選)。
+
+        無效動作(選 V2V 卻沒鄰車、選 RSU 卻不在覆蓋內)先前是靠 -PENALTY_FAIL
+        的罰則去學。改用 invalid action masking(把該動作 logit 設 -inf)：
+        探索不再浪費在必然失敗的動作上，早期梯度也不會被無效動作主導。
+        local 永遠合法 → 至少有一個動作可選。
+        """
+        masks = np.ones((len(self._active), self.n_actions), dtype=bool)
+        for i, (_sid, ctx) in enumerate(self._active):
+            masks[i, MA_ACTIONS.index("v2v_strong")] = ctx["strong_id"] is not None
+            masks[i, MA_ACTIONS.index("v2v_near")] = ctx["near_id"] is not None
+            masks[i, MA_ACTIONS.index("rsu")] = ctx["rsu_id"] is not None
+            masks[i, MA_ACTIONS.index("cloud")] = ctx["rsu_id"] is not None
+        return masks
+
     def greedy_actions(self):
         """
         就近最快啟發式基準：每個 agent 選『預估總延遲最低』的可行動作。
@@ -718,6 +746,8 @@ class VECMultiEnv:
                       "arrival_delivered": 0,  # 其中經「抵達補送」救回者(break_recovered 子類)
                       "rsu_handover": 0,     # RSU/雲結果經「換手」由新服務基站送達(非斷線)
                       "stale_miss": 0,       # ★孿生過期直接害死的卸載(孿生內、物理外)
+                      "fb_no_server": 0,     # fallback 成因:範圍內沒有任何 server
+                      "fb_saturated": 0,     # fallback 成因:有 server 但本 tick 全被佔用
                       "latency_sum": 0.0, "latency_n": 0,
                       "energy_sum": 0.0, "energy_n": 0,
                       "cost_sum": 0.0, "by_target": {},
@@ -817,6 +847,8 @@ class VECMultiEnv:
                 "rsu_handover": s["rsu_handover"],
                 "stale_miss": s["stale_miss"],
                 "fallback": s["fallback"],
+                "fb_no_server": s["fb_no_server"],
+                "fb_saturated": s["fb_saturated"],
                 "by_target": dict(s["by_target"])}
 
     def close(self):

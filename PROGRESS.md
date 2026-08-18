@@ -72,7 +72,7 @@ GAE(γ=0.95, λ=0.95) + PPO clip(0.2) + entropy(0.02)；團隊獎勵=該 tick �
 | 獎勵權重 | ENERGY_W 1.0 / ENERGY_NORM 5.0 / COST_W 1.0 | |
 | 罰則 | PENALTY_MISS 2.0 / PENALTY_FAIL 5.0 | |
 | 觀測正規化 | DATA_NORM 10e6 / CPU_NORM 6e9 / DEAD_NORM 3.0 | |
-| **觀測維度** | 單代理 12 / 多代理 18；全域狀態 = RSU數 + 5 | |
+| **觀測維度** | 單代理 12 / 多代理 19；全域狀態 = RSU數 + 5 | |
 
 **避免過度用雲的旋鈕**：`BACKHAUL_CAPACITY_BPS`↓、`COST_W`↑、`CLOUD_EXTRA_LATENCY`↑。
 
@@ -180,6 +180,21 @@ Geofabrik `taiwan-latest.osm.pbf` → `osmconvert -b="西,南,東,北"` 裁切 �
 - τ 語意已修正：決策側全面讀 `twin_states`，新增 `stale_miss` 統計。
   **`run_dt_delay.py` 需重跑**；τ=0 逐位元不變 → 主對照/收斂/多 seed/IPPO/消融不受影響。
 - ⚠ 倉庫的 `osm.sumocfg` 仍指向舊的忠孝東路路網 → 正式實驗一律用 **`hepingeast2.sumocfg`**。
+
+## 7.6 卸載層檢視（2026-08，見 OFFLOADING_MODEL.md）
+
+- 🔴 **已修**：任務指派原本只試「最近那台 server」，被佔用就退回本地 →
+  39% 的任務繞過策略、全在 1GHz 弱車上跑（vision fallback 成功率 0%）。
+  修正後 mock/greedy：成功率 78.2%→95.7%、延遲 1290→400ms。
+  **修正前的成功率與延遲數字全部失效，必須重跑。**
+- 🔴 **須聲明**：能耗是**系統總能耗**（含執行節點運算耗能），不是「卸載省電」。
+  在本模型中本地執行最省能，卸載是拿能耗換 deadline。
+- 🟠 **已修**：觀測補上「範圍內 server 數」→ **18 維改 19 維，舊模型作廢**。
+- 🟠 **已修**：下行能耗改用發射端功率（新增 `RSU_TX_POWER_W`）。
+- 🟡 **已修**：無效動作改用 invalid action masking。
+- 🟡 **新工具**：`--individual-reward`（差分獎勵）、`sweep_rsu_config.py`
+  （RSU 配置敏感度：反雲結論對 `RSU_CPU` 高度敏感，24GHz 起邊緣層取代雲端）。
+- 🟠 **未修待決定**：原始 client 在指派後即從模型消失，結果沒送回產生任務的車。
 
 ## 8. 已知待辦 / 未建模（論文「假設」一節可聲明）
 

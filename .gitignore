@@ -44,3 +44,6 @@ real_traffic_hep_calibrated.rou.xml
 flow_counts.xml
 _cand_trips.xml
 _cand_routes.rou.xml
+
+# RSU 配置敏感度掃描
+rsu_config_results.json

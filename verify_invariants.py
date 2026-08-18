@@ -156,7 +156,7 @@ from vec_env_ma import VECMultiEnv, MA_ACTIONS
 env = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24, server_ratio=0.45,
                   episode_ticks=200, task_cpu_scale=1.0)
 obs, state = env.reset(seed=42)
-check("觀測維度 18、值域[0,1]", obs.shape[1] == 18 and
+check("觀測維度 19、值域[0,1]", obs.shape[1] == 19 and
       float(obs.min()) >= 0.0 and float(obs.max()) <= 1.0)
 check("全域狀態維度 = RSU數+5", state.shape[0] == len(env.rsu_ids) + 5)
 rng = np.random.default_rng(42)
@@ -193,8 +193,8 @@ check("任務優先權落在各 profile 範圍(sensor/nav/vision)", ok_rng)
 env_p = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24,
                     server_ratio=0.45, episode_ticks=30, priority_aware=True)
 obs_p, _ = env_p.reset(seed=9)
-check("priority_aware：觀測 19 維且值域[0,1]",
-      env_p.n_features == 19 and obs_p.shape[1] == 19
+check("priority_aware：觀測 20 維且值域[0,1]",
+      env_p.n_features == 20 and obs_p.shape[1] == 20
       and float(obs_p.min()) >= 0.0 and float(obs_p.max()) <= 1.0)
 env_p.close()
 
@@ -275,6 +275,70 @@ check("孿生過期造成的不可達計入 stale_miss",
       env_sm.stats["stale_miss"] - _sm0 == 1,
       f"+{env_sm.stats['stale_miss'] - _sm0}")
 env_sm.close()
+
+# ------------------------------------------------------------ [9] 卸載決策層
+print("\n=== [9] 卸載決策層 ===")
+
+# 指派:最近的 server 被佔用時,應改試第二近,而不是退回本地
+env_a = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24,
+                    server_ratio=0.45, episode_ticks=120)
+obs_a, _ = env_a.reset(seed=3)
+_rng = np.random.default_rng(3)
+while True:
+    _, obs_a, _, _d, _info = env_a.step(_rng.integers(0, env_a.n_actions, size=obs_a.shape[0]))
+    if _d:
+        break
+_s = _info["episode_stats"]
+_decided = sum(_s["by_target"].values())
+_fb = env_a.stats["fallback"]
+check("大多數任務由策略決策(fallback 未主導)",
+      _fb < _decided * 0.25,
+      f"決策 {_decided} 筆 / fallback {_fb} 筆({100*_fb/(_fb+_decided):.1f}%)")
+check("fallback 成因可完整歸因(沒有 server + 全被佔用 = fallback 總數)",
+      env_a.stats["fb_no_server"] + env_a.stats["fb_saturated"] == _fb,
+      f"無 server {env_a.stats['fb_no_server']} + 飽和 {env_a.stats['fb_saturated']}"
+      f" = {_fb}")
+env_a.close()
+
+# 動作遮罩:與 _resolve_one 的可達判定完全一致,且 local 恆合法
+env_m = VECMultiEnv(mock=True, arrival_rate=0.5, mock_vehicles=24,
+                    server_ratio=0.45, episode_ticks=60)
+env_m.reset(seed=5)
+_mk = env_m.action_masks()
+_consistent = True
+for _i, (_sid, _c) in enumerate(env_m._active):
+    _exp = [True, _c["strong_id"] is not None, _c["near_id"] is not None,
+            _c["rsu_id"] is not None, _c["rsu_id"] is not None]
+    _consistent &= all(bool(_mk[_i, _j]) == _exp[_j] for _j in range(len(_exp)))
+check("動作遮罩與可達判定一致、local 恆合法",
+      _consistent and bool(_mk[:, MA_ACTIONS.index("local")].all()),
+      f"{_mk.shape[0]} 個 agent")
+env_m.close()
+
+# RSU 多服務槽:cores>1 時排隊應變短
+from nodes import ComputeNodes as _CN
+from task_model import Task as _T
+_t1 = _T("q", "s", "vision", data_bits=1e6, cpu_cycles=8e9, deadline_s=9,
+         created_at=0, result_bits=1e5)
+_w = {}
+for _c in (1, 4):
+    _n = _CN(); _n.register("r", 8e9, "rsu", cores=_c)
+    _w[_c] = [_n.commit("r", 0.0, _t1) for _ in range(4)]
+check("RSU 多服務槽:cores=4 的第 4 個任務不必排隊",
+      _w[1][3] > 2.5 and _w[4][3] == 0.0,
+      f"cores=1 等 {_w[1][3]:.1f}s / cores=4 等 {_w[4][3]:.1f}s")
+
+# 下行能耗依發射端功率計(RSU 下行不再記在車輛的 0.5W 上)
+from nodes import build_nodes as _bn, estimate as _est
+from infra_config import TX_POWER_W as _TP, RSU_TX_POWER_W as _RP
+_nd = _bn({"rsu_0": {"x": 0, "y": 0}}); _nd.register("me", 1e9, "vehicle")
+_r_rsu = _est(_t1, "rsu", 0.0, (50, 0), _nd, target_id="rsu_0", target_pos=(0, 0))
+_nd2 = _bn({"rsu_0": {"x": 0, "y": 0}})
+_nd2.register("me", 1e9, "vehicle"); _nd2.register("nb", 1e9, "vehicle")
+_r_v2v = _est(_t1, "v2v", 0.0, (50, 0), _nd2, target_id="nb", target_pos=(80, 0))
+check("下行能耗用發射端功率(RSU 下行 > 車輛下行的等效功率)",
+      _RP > _TP and _r_rsu["feasible"] and _r_v2v["feasible"],
+      f"車 {_TP}W / RSU {_RP}W")
 
 print("\n" + "=" * 60)
 fails = [n for n, ok, _ in RESULTS if not ok]

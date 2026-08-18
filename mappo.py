@@ -37,8 +37,12 @@ class Actor(nn.Module):
     def forward(self, obs):
         return self.net(obs)
 
-    def dist(self, obs):
-        return Categorical(logits=self.forward(obs))
+    def dist(self, obs, masks=None):
+        """masks: bool tensor [.., n_actions]，False 的動作被遮成 -inf(不可選)。"""
+        logits = self.forward(obs)
+        if masks is not None:
+            logits = logits.masked_fill(~masks, float("-inf"))
+        return Categorical(logits=logits)
 
 
 class Critic(nn.Module):
@@ -83,27 +87,36 @@ class MAPPO:
             g["lr"] = lr
         return lr
 
+    def _masks_t(self, masks):
+        if masks is None:
+            return None
+        return torch.as_tensor(np.asarray(masks, dtype=bool), device=self.device)
+
     # ---------- 與環境互動（rollout 時用）----------
     @torch.no_grad()
-    def act(self, obs_batch):
-        """一批觀測 → 取樣動作 + log機率（探索用）。"""
+    def act(self, obs_batch, masks=None):
+        """一批觀測 → 取樣動作 + log機率（探索用）。masks=合法動作遮罩。"""
         if len(obs_batch) == 0:
             return np.array([], dtype=np.int64), np.array([], dtype=np.float32)
         obs = torch.as_tensor(obs_batch, dtype=torch.float32, device=self.device)
-        dist = self.actor.dist(obs)
+        dist = self.actor.dist(obs, self._masks_t(masks))
         a = dist.sample()
         return a.cpu().numpy(), dist.log_prob(a).cpu().numpy()
 
     @torch.no_grad()
-    def act_greedy(self, obs_batch):
-        """一批觀測 → 最佳動作（評估用，不探索）。"""
+    def act_greedy(self, obs_batch, masks=None):
+        """一批觀測 → 最佳動作（評估用，不探索）。masks=合法動作遮罩。"""
         if len(obs_batch) == 0:
             return np.array([], dtype=np.int64)
         obs = torch.as_tensor(obs_batch, dtype=torch.float32, device=self.device)
-        return self.actor.forward(obs).argmax(-1).cpu().numpy()
+        logits = self.actor.forward(obs)
+        mt = self._masks_t(masks)
+        if mt is not None:
+            logits = logits.masked_fill(~mt, float("-inf"))
+        return logits.argmax(-1).cpu().numpy()
 
     @torch.no_grad()
-    def act_probs(self, obs_batch):
+    def act_probs(self, obs_batch, masks=None):
         """一批觀測 → 完整 softmax 機率矩陣 [k, n_actions]（診斷用）。
         揭示 argmax 分布圖背後的真實策略機率：某動作 argmax=0% 未必機率=0%，
         可能只是永遠差一點被壓成第二名。"""
@@ -111,6 +124,9 @@ class MAPPO:
             return np.zeros((0, 0), dtype=np.float32)
         obs = torch.as_tensor(obs_batch, dtype=torch.float32, device=self.device)
         logits = self.actor.forward(obs)
+        mt = self._masks_t(masks)
+        if mt is not None:
+            logits = logits.masked_fill(~mt, float("-inf"))
         return torch.softmax(logits, dim=-1).cpu().numpy()
 
     @torch.no_grad()
@@ -129,11 +145,18 @@ class MAPPO:
         return float(self.critic(o).mean().item())
 
     # ---------- PPO 更新 ----------
-    def update(self, ticks, last_value=0.0):
+    def update(self, ticks, last_value=0.0, reward_mode="team"):
         """
         ticks: list of dict，每個 tick 含
           obs[k,F], actions[k], logprobs[k], state[S], reward(團隊), done(bool)
+          選用：masks[k,A](合法動作遮罩)、rewards_i[k](各 agent 個別獎勵)
         last_value: rollout 最後一個 state 的 bootstrap 價值(未結束時)。
+        reward_mode:
+          "team"       = 既有行為。同一 tick 的所有 agent 共享該 tick 的 advantage。
+          "individual" = ★差分獎勵(difference reward)：agent 的 advantage 再加上
+                         「自己的獎勵與該 tick 團隊平均的差」。時間結構(GAE)仍走
+                         團隊獎勵，但個別功過不再被平均掉。
+                         用途:檢驗「IPPO≈MAPPO 是否肇因於團隊獎勵稀釋信用」。
         """
         T = len(ticks)
         if T == 0:
@@ -166,10 +189,12 @@ class MAPPO:
             gae = delta + self.gamma * self.lam * nonterm * gae
             adv[t] = gae
         ret = adv + values[:T]
-        adv = (adv - adv.mean()) / (adv.std() + 1e-8)   # 標準化，訓練更穩
+        if reward_mode == "team":
+            adv = (adv - adv.mean()) / (adv.std() + 1e-8)   # 標準化，訓練更穩
 
-        # 攤平所有 agent 樣本；同 tick 的 agent 共享該 tick 的 advantage/return
-        obs_all, act_all, logp_all, adv_all, ret_all = [], [], [], [], []
+        # 攤平所有 agent 樣本；team 模式下同 tick 的 agent 共享該 tick 的 advantage
+        obs_all, act_all, logp_all, adv_all, ret_all, mask_all = [], [], [], [], [], []
+        has_masks = all(tk.get("masks") is not None for tk in ticks if len(tk["actions"]))
         for t, tk in enumerate(ticks):
             k = len(tk["actions"])
             if k == 0:
@@ -177,13 +202,26 @@ class MAPPO:
             obs_all.append(tk["obs"])
             act_all.append(tk["actions"])
             logp_all.append(tk["logprobs"])
-            adv_all.append(np.full(k, adv[t], dtype=np.float32))
+            if reward_mode == "individual" and tk.get("rewards_i") is not None:
+                ri = np.asarray(tk["rewards_i"], dtype=np.float32)
+                adv_all.append(adv[t] + (ri - ri.mean()))   # 差分獎勵
+            else:
+                adv_all.append(np.full(k, adv[t], dtype=np.float32))
             ret_all.append(np.full(k, ret[t], dtype=np.float32))
+            if has_masks:
+                mask_all.append(np.asarray(tk["masks"], dtype=bool))
 
         obs_t = torch.as_tensor(np.concatenate(obs_all), dtype=torch.float32, device=self.device)
         act_t = torch.as_tensor(np.concatenate(act_all), dtype=torch.long, device=self.device)
         oldlogp_t = torch.as_tensor(np.concatenate(logp_all), dtype=torch.float32, device=self.device)
-        adv_t = torch.as_tensor(np.concatenate(adv_all), dtype=torch.float32, device=self.device)
+        adv_np = np.concatenate(adv_all)
+        if reward_mode != "team":
+            # 個別模式：advantage 在「agent 樣本」層級標準化(團隊模式維持原本的
+            # tick 層級標準化，行為逐位元不變)
+            adv_np = (adv_np - adv_np.mean()) / (adv_np.std() + 1e-8)
+        adv_t = torch.as_tensor(adv_np, dtype=torch.float32, device=self.device)
+        masks_t = (torch.as_tensor(np.concatenate(mask_all), device=self.device)
+                   if mask_all else None)
         ret_t = torch.as_tensor(ret, dtype=torch.float32, device=self.device)
         ret_agent_t = torch.as_tensor(np.concatenate(ret_all), dtype=torch.float32,
                                       device=self.device)
@@ -191,7 +229,7 @@ class MAPPO:
         last = {}
         for _ in range(self.epochs):
             # actor：PPO clip 目標
-            dist = self.actor.dist(obs_t)
+            dist = self.actor.dist(obs_t, masks_t)
             newlogp = dist.log_prob(act_t)
             entropy = dist.entropy().mean()
             ratio = torch.exp(newlogp - oldlogp_t)

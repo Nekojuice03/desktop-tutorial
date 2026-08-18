@@ -73,7 +73,7 @@ def eval_model(model_file, priority_aware, base_cfg):
                 if done:
                     break
                 continue
-            a = algo.act_greedy(obs)
+            a = algo.act_greedy(obs, env.action_masks())
             _, obs, state, done, info = env.step(a)
             if done:
                 break

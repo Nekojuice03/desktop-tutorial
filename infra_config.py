@@ -46,7 +46,14 @@ V2I_LINK = {"bandwidth": RSU_BANDWIDTH_HZ, "range": RSU_RANGE_M,
 VEHICLE_CPU      = 1.0e9     # 弱 server / client 的算力（最弱）
 STRONG_VEHICLE_CPU = 12.0e9  # 強 server 的算力（多核聚合；V2V 幫手，故意高於基站）
 STRONG_RATIO     = 0.35      # server 中強車比例(近未來車聯網成熟場景，三至四成車有運算餘裕)
-RSU_CPU          = 8.0e9     # 基站（故意略低於強車，讓近距離 V2V 有優勢）
+RSU_CPU          = 8.0e9     # 基站「每個並行服務槽」的算力（故意略低於強車，讓近距離 V2V 有優勢）
+# ★RSU 並行服務槽數(2026-08 檢視新增)。先前 RSU 是「單一 FIFO」：一個 vision 任務
+#   就佔住 ~560ms，第二個直接等 560ms(deadline 只有 1500ms) → 邊緣層幾乎不被選用
+#   (實測 greedy 只有 1% 的任務選 RSU)。真實 MEC 伺服器是多核並行的。
+#   RSU 總容量 = RSU_CORES × RSU_CPU。
+#   ⚠ 預設 1 = 維持既有行為(舊結果可比)。要探討邊緣層的合理配置，
+#     用 sweep_params.py 掃 RSU_CORES，並在論文說明所採用的值與理由。
+RSU_CORES        = 1
 CLOUD_CPU        = 50.0e9    # 雲端（最強，但延遲高）
 
 # ========== 各層「協議存取」固定延遲 (秒) ==========
@@ -78,7 +85,15 @@ STRONG_VEHICLE_ENERGY_PER_CYCLE = 2.25e-9
 RSU_ENERGY_PER_CYCLE     = 2e-9   # 邊緣基站(中等)
 CLOUD_ENERGY_PER_CYCLE   = 4e-9   # 雲端(最高，含資料中心散熱/PUE 開銷)
 
-TX_POWER_W               = 0.5    # 車輛無線傳輸功率(瓦)：上/下行卸載耗能 = 功率 × 傳輸時間
+# 車輛無線電的「消耗」功率(瓦)。注意這與鏈路預算的 23 dBm 不是同一件事：
+#   23 dBm = 0.2 W 是天線「輻射」功率(算 SINR 用)；
+#   0.5 W  是收發機「消耗」功率(算能耗用)，兩者比值 2.5× 隱含功率放大器效率約 40%，
+#   為車載 PA 的合理區間。★兩個數字並非筆誤，論文請一併說明。
+TX_POWER_W               = 0.5
+# RSU 下行的等效消耗功率(瓦)。先前下行一律用車輛的 TX_POWER_W 計能耗，
+# 但 RSU→車 這段是 RSU 在發射，路側設備功率高於車載。能耗為「系統總能耗」，
+# 故仍計入總帳，只是改用發射端自己的功率。
+RSU_TX_POWER_W           = 2.0
 # 雲端回程(RSU↔雲，有線骨幹)的等效傳輸功率(瓦)：只有走雲端這段才會用到，
 # 讓「雲端」在傳輸面也比「邊緣」多一份回程能耗 → 進一步拉開邊緣 vs 雲端。
 CLOUD_BACKHAUL_POWER_W   = 1.0

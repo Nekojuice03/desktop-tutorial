@@ -48,7 +48,7 @@ def run_at_rate(env, mode, algo, episodes, seed0=3000):
             if mode == "greedy":
                 actions = env.greedy_actions()
             else:
-                actions = algo.act_greedy(obs)
+                actions = algo.act_greedy(obs, env.action_masks())
             _, obs, state, done, info = env.step(actions)
             if done:
                 break

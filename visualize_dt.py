@@ -50,7 +50,8 @@ def record_episode(env, algo, ticks_limit):
                 break
             continue
         # 決策(有模型用模型，否則 greedy)
-        actions = algo.act_greedy(obs) if algo else env.greedy_actions()
+        actions = (algo.act_greedy(obs, env.action_masks()) if algo
+                   else env.greedy_actions())
         # 決策連線：持有車 → 目標
         decisions = []
         for (sid, ctx), a in zip(env._active, actions):

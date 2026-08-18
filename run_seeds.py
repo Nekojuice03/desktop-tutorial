@@ -19,7 +19,7 @@ import torch
 
 from vec_env_ma import VECMultiEnv
 from mappo import MAPPO
-from train_mappo import collect, evaluate, ROLLOUT_TICKS, ITERATIONS
+from train_mappo import REWARD_MODE, collect, evaluate, ROLLOUT_TICKS, ITERATIONS
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 METRICS = ("sr", "vis", "lat", "en", "cost")
@@ -38,7 +38,7 @@ def train_one(cfg, seed, iters, ippo):
     for it in range(1, iters + 1):
         algo.set_lr(1.0 - (it - 1) / iters)
         ticks, carry, lv = collect(env, algo, ROLLOUT_TICKS, carry)
-        algo.update(ticks, last_value=lv)
+        algo.update(ticks, last_value=lv, reward_mode=REWARD_MODE)
     m = evaluate(eval_env, algo)
     env.close()
     eval_env.close()

@@ -38,6 +38,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 #   agent 分不出 3G 和 6G cycle 的任務 → 失去「該上雲還是上邊緣」的關鍵資訊。
 DATA_NORM, CPU_NORM, DEAD_NORM = 10e6, 6e9, 3.0
 WAIT_NORM, CONTACT_NORM = 2.0, 60.0
+NBR_NORM = 10.0      # 範圍內 server 數的正規化上限(競爭程度特徵)
 N_FEATURES = 12   # +1：回程(backhaul)佇列等待 —— agent 須看得到雲端壅塞才公平
 
 # ---- 動作 ----

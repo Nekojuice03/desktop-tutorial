@@ -56,7 +56,7 @@ def run_episodes(env, mode, algo=None, episodes=6, seed0=2000):
             elif mode == "random":
                 actions = rng.integers(0, env.n_actions, size=k)
             else:  # mappo
-                actions = algo.act_greedy(obs)
+                actions = algo.act_greedy(obs, env.action_masks())
             _, obs, state, done, info = env.step(actions)
             if done:
                 break

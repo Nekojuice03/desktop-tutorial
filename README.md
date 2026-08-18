@@ -4,7 +4,7 @@
 用多智能體強化學習(MAPPO, CTDE)學習「本地 / V2V(強車·近車) / 邊緣 RSU / 雲端」
 四層運算卸載決策,在**延遲、能耗、使用成本、deadline、移動性**多重限制下最大化任務成功率。
 
-> 📄 詳細文件:[DT_DEFINITION.md](DT_DEFINITION.md)(**數位孿生定位/保真度/可宣稱邊界**) · [PROGRESS.md](PROGRESS.md)(進度/參數/待辦) · [COMM_MODEL.md](COMM_MODEL.md)(通訊/移動性模型公式與文獻)
+> 📄 詳細文件:[DT_DEFINITION.md](DT_DEFINITION.md)(**孿生定位/保真度/可宣稱邊界**) · [OFFLOADING_MODEL.md](OFFLOADING_MODEL.md)(**卸載決策/能耗語意/PPO 狀態**) · [PROGRESS.md](PROGRESS.md)(進度/參數/待辦) · [COMM_MODEL.md](COMM_MODEL.md)(通訊/移動性模型公式與文獻)
 
 ---
 
@@ -59,7 +59,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    T["任務<br/>sensor輕/nav中/vision重"] --> A{"MAPPO agent<br/>(18維觀測)"}
+    T["任務<br/>sensor輕/nav中/vision重"] --> A{"MAPPO agent<br/>(19維觀測)"}
     A -->|"local"| L["本地弱車 1GHz<br/>慢·零能耗成本"]
     A -->|"v2v_strong"| S["強車 12GHz(多核)<br/>快·κf²能耗較高<br/>⚠️會移動·會離場"]
     A -->|"v2v_near"| N["近弱車<br/>近·算力低"]
@@ -104,16 +104,17 @@ VD 對應(`vd_sumo_mapping.csv`)綁定路網,`--remap` 會自動偵測重建。
 | `task_model.py` | 三類任務(資料量/運算量/deadline)、Poisson 到達 |
 | `nodes.py` | 延遲分解、κf² 能耗、pay-per-use 成本、FIFO 佇列、回程壅塞、sojourn 約束 |
 | `kalman_tracker.py` | EKF-CTRV:僅用 BSM 觀測估轉彎率 ω → 預測連線壽命(可部署層) |
-| `vec_env_ma.py` | 多智能體環境:18維觀測、事件驅動結算、V2I遷移恢復、換手 |
+| `vec_env_ma.py` | 多智能體環境:19維觀測、事件驅動結算、V2I遷移恢復、換手 |
 | `mappo.py` / `train_mappo.py` | CTDE MAPPO、GAE、LR 衰減、多指標評估(固定種子) |
 | `setup_rsu.py` | RSU 佈點:junction(路口四角+路肩)/greedy 兩模式,自適應數量 |
 | `make_real_flow.py` | 台北 VD 真實車流→SUMO(路段/設備雙模式、僅小客車、自動對應+校對) |
 | `compare_and_plot.py` | 六方法對照(Local/RSU/Cloud/Random/Greedy/MAPPO)+多指標圖 |
 | `run_ablation.py` | 移動性消融:預判{linear,kalman,route}×恢復{fail,v2i} |
-| `verify_invariants.py` | 25 項物理不變量迴歸測試 |
+| `verify_invariants.py` | 40 項物理不變量迴歸測試 |
 | `analyze_offloading.py` | 單任務 oracle:各層何時勝出、交叉點、Pareto 圖 |
 | `validate_twin_fidelity.py` | **孿生保真度**:VD 實測 vs SUMO 模擬流量的 GEH/MAPE/RMSE |
 | `calibrate_flow.py` | **車流校正**:以 VD 計數為約束、經 `routeSampler` 反推一致路徑集合 |
+| `sweep_rsu_config.py` | **RSU 配置敏感度**:並行度/單槽算力 → 邊緣層使用率(反雲結論的穩健性) |
 | ~~`realtime_calibrator.py`~~ | LEGACY:即時 calibrator(Digital Shadow 原型),仍綁舊場景、未接管線 |
 | ~~`dt_state_extractor.py`~~ | LEGACY:早期狀態萃取原型,已被 `vec_env_ma.py` 取代 |
 

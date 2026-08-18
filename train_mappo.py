@@ -26,6 +26,7 @@ ITERATIONS = 200      # 更新幾次(輪數多→後期在高點附近飽和，�
 EVAL_EVERY = 3        # 每幾次更新評估一次(越密集→收斂圖的點越多→曲線越平滑)
 # 固定的評估種子集：每次評估都用同一組情境，收斂曲線才穩定可重現(不再每次抽不同隨機局)
 EVAL_SEEDS = [10_001, 10_002, 10_003, 10_004, 10_005]
+REWARD_MODE = "team"   # "team"(預設) | "individual"(差分獎勵消融，--individual-reward)
 
 
 def collect(env, algo, n_ticks, carry):
@@ -37,12 +38,14 @@ def collect(env, algo, n_ticks, carry):
         if obs.shape[0] == 0:   # 退化(空)觀測 → 重置再來
             obs, state = env.reset()
             continue
-        actions, logps = algo.act(obs)
+        masks = env.action_masks()
+        actions, logps = algo.act(obs, masks)
         rewards, next_obs, next_state, done, info = env.step(actions)
         team_r = float(rewards.mean()) if rewards.size else 0.0
         ticks.append({"obs": obs, "actions": actions, "logprobs": logps,
-                      "state": state,
-                      "reward": team_r,   # 團隊獎勵=個別平均(agent數可變時較穩)
+                      "state": state, "masks": masks,
+                      "reward": team_r,       # 團隊獎勵=個別平均(agent數可變時較穩)
+                      "rewards_i": rewards,   # 個別獎勵(reward_mode="individual" 用)
                       "done": done})
         steps += 1
         if done:
@@ -71,7 +74,7 @@ def evaluate(eval_env, algo, seeds=EVAL_SEEDS):
                 if done:
                     break
                 continue
-            a = algo.act_greedy(obs)
+            a = algo.act_greedy(obs, eval_env.action_masks())
             for x in a:
                 act_count[ACTIONS[int(x)]] += 1
             rewards, obs, state, done, info = eval_env.step(a)
@@ -113,10 +116,16 @@ def main():
     ippo = "--ippo" in sys.argv
     # --priority：任務優先權延伸實驗(觀測+1維、延遲/罰則按優先權加權；獨立輸出檔)
     priority = "--priority" in sys.argv
+    # --individual-reward：差分獎勵消融(agent 的 advantage 加上「自己 vs 團隊平均」
+    #   的差),用來檢驗「IPPO≈MAPPO 是否肇因於團隊獎勵把個別功過平均掉」
+    global REWARD_MODE
+    REWARD_MODE = "individual" if "--individual-reward" in sys.argv else "team"
     if priority:
         cfg["priority_aware"] = True
-    algo_name = ("IPPO" if ippo else "MAPPO") + ("+priority" if priority else "")
-    suffix = ("_ippo" if ippo else "") + ("_prio" if priority else "")
+    algo_name = (("IPPO" if ippo else "MAPPO") + ("+priority" if priority else "")
+                 + ("+indiv" if REWARD_MODE == "individual" else ""))
+    suffix = (("_ippo" if ippo else "") + ("_prio" if priority else "")
+              + ("_indiv" if REWARD_MODE == "individual" else ""))
     model_out = f"mappo{suffix}_vec.pt" if suffix else "mappo_vec.pt"
     log_name = f"mappo_train_log{suffix}.csv" if suffix else "mappo_train_log.csv"
 
@@ -146,7 +155,7 @@ def main():
     for it in range(1, iters + 1):
         algo.set_lr(1.0 - (it - 1) / iters)   # ★線性 LR 衰減：穩定後期、壓住策略震盪
         ticks, carry, last_v = collect(env, algo, ROLLOUT_TICKS, carry)
-        info = algo.update(ticks, last_value=last_v)
+        info = algo.update(ticks, last_value=last_v, reward_mode=REWARD_MODE)
         if it % EVAL_EVERY == 0 or it == iters:
             m = evaluate(eval_env, algo)
             log_rows.append((it, m["sr"], m["vis"], m["lat"], m["en"], m["cost"]))

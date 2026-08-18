@@ -16,12 +16,12 @@
 """
 from comm_model import distance, transmission_delay
 from infra_config import (
-    VEHICLE_CPU, RSU_CPU, CLOUD_CPU,
+    VEHICLE_CPU, RSU_CPU, RSU_CORES, CLOUD_CPU,
     V2V_LINK, V2I_LINK,
     V2V_EXTRA_LATENCY, RSU_EXTRA_LATENCY, CLOUD_EXTRA_LATENCY,
     BACKHAUL_CAPACITY_BPS,
     VEHICLE_ENERGY_PER_CYCLE, RSU_ENERGY_PER_CYCLE, CLOUD_ENERGY_PER_CYCLE,
-    TX_POWER_W, CLOUD_BACKHAUL_POWER_W,
+    TX_POWER_W, RSU_TX_POWER_W, CLOUD_BACKHAUL_POWER_W,
     CLOUD_COST_PER_CYCLE, RSU_COST_PER_CYCLE,
 )
 
@@ -40,11 +40,19 @@ class ComputeNodes:
         self._no_queue = set()  # 無佇列的節點(雲端運算)
         self._rate = {}       # link_id -> 傳輸容量(bits/s)，給共享鏈路(回程)排隊用
         self._eppc = {}       # node_id -> 每 cycle 耗能(J/cycle)，未設定者用該層預設值
+        self._multi = {}      # node_id -> [busy_until]*cores(並行服務槽，cores>1 才建立)
 
-    def register(self, node_id, cpu, kind, energy_per_cycle=None):
+    def register(self, node_id, cpu, kind, energy_per_cycle=None, cores=1):
+        """cores>1 = 多個並行服務槽(每槽算力為 cpu)。總容量 = cores × cpu。
+
+        真實 MEC 伺服器是多核並行的；cores=1 等同舊的單一 FIFO 行為。
+        """
         self._cpu[node_id] = cpu
         self._busy.setdefault(node_id, 0.0)
         self._kind[node_id] = kind
+        cores = max(1, int(cores))
+        if cores > 1:
+            self._multi[node_id] = [0.0] * cores
         if energy_per_cycle is not None:    # 異質能耗(如強車依 κf² 較耗能)
             self._eppc[node_id] = energy_per_cycle
         if kind == "cloud":
@@ -71,16 +79,30 @@ class ComputeNodes:
         """共享鏈路上傳這些位元的傳輸時間 = 資料量 / 容量。"""
         return data_bits / self._rate[link_id]
 
+    def cores(self, node_id):
+        return len(self._multi.get(node_id, (0,))) if node_id in self._multi else 1
+
     def wait_time(self, node_id, arrival):
-        """任務在 arrival 時刻抵達，需要排隊多久才輪到它。"""
+        """任務在 arrival 時刻抵達，需要排隊多久才輪到它。
+
+        多槽節點：等到「最早空出來的那個槽」。
+        """
         if node_id in self._no_queue:
             return 0.0
+        if node_id in self._multi:
+            return max(0.0, min(self._multi[node_id]) - arrival)
         return max(0.0, self._busy.get(node_id, 0.0) - arrival)
 
     def commit(self, node_id, arrival, task):
         """真的把任務排進去，更新節點 busy_until。回傳排隊時間。"""
         if node_id in self._no_queue:
             return 0.0
+        if node_id in self._multi:
+            slots = self._multi[node_id]
+            i = min(range(len(slots)), key=lambda j: slots[j])   # 最早空的槽
+            start = max(slots[i], arrival)
+            slots[i] = start + self.service_time(node_id, task)
+            return start - arrival
         start = max(self._busy.get(node_id, 0.0), arrival)
         self._busy[node_id] = start + self.service_time(node_id, task)
         return start - arrival
@@ -99,7 +121,7 @@ def build_nodes(rsus):
     """
     nodes = ComputeNodes()
     for rid in rsus:
-        nodes.register(rid, RSU_CPU, "rsu")
+        nodes.register(rid, RSU_CPU, "rsu", cores=RSU_CORES)
     nodes.register("cloud", CLOUD_CPU, "cloud")
     nodes.register_link("backhaul", BACKHAUL_CAPACITY_BPS)   # RSU↔雲共享回程(會壅塞)
     return nodes
@@ -199,7 +221,10 @@ def estimate(task, target_kind, now, src_pos, nodes,
     else:  # cloud
         e_per_cycle = CLOUD_ENERGY_PER_CYCLE
     compute_energy = task.cpu_cycles * e_per_cycle               # 運算耗能(執行節點)
-    tx_energy = TX_POWER_W * (up_tx + down_tx)                   # 車輛無線傳輸耗能(本地為0)
+    # 無線傳輸耗能依「誰在發射」計：上行一律是車;下行 v2v 是對方車輛、
+    # rsu/cloud 是路側設備(功率較高)。能耗為系統總帳，故雙向都計入。
+    down_power = RSU_TX_POWER_W if target_kind in ("rsu", "cloud") else TX_POWER_W
+    tx_energy = TX_POWER_W * up_tx + down_power * down_tx
     backhaul_energy = CLOUD_BACKHAUL_POWER_W * bh_tx             # 僅雲端的有線骨幹傳輸耗能
     energy = compute_energy + tx_energy + backhaul_energy
 

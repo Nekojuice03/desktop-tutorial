@@ -88,7 +88,7 @@ def eval_scenario(cfg_path, algo, seeds, arrival_rate, episode_ticks):
             nr_in += float(obs[:, OBS_NR_IN].sum())
             rsu_in += float(obs[:, OBS_RSU_IN].sum())
             dec_n += obs.shape[0]
-            a = algo.act_greedy(obs)
+            a = algo.act_greedy(obs, env.action_masks())
             _, obs, state, done, info = env.step(a)
             if done:
                 break
