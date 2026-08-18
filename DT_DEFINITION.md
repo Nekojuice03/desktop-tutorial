@@ -147,6 +147,53 @@ python validate_twin_fidelity.py --sumocfg hepingeast2.sumocfg \
 ⚠ 採用校正後車流會改變車流密度 → V2V 機會與 RSU 負載改變 →
 §5.2~5.6 全部需重跑、MAPPO 需重訓。
 
+### 4.1 三組車流的實測比較與選擇(2026-08-17 快照)
+
+同一份 VD 快照(`traffic_data/GetVD_20260817_140317.xml`)、同一路網,
+三種產生車流的方式,以**實測站**(n=2)為主指標:
+
+| | 車流來源 | 插入車輛 | 205066812#6 GEH | 317526886#0 GEH | MAPE | 判定 |
+|---|---|---|---|---|---|---|
+| (a) | `make_real_flow.py`(計數當注入量) | 1643 | **14.50** | 0.14 | 43.2% | ✗ |
+| (b) | `calibrate_flow.py --counts measured`(n=2 約束) | 613 | **0.08** | 0.63 | 2.1% | ✓ |
+| (c) | `calibrate_flow.py --counts all`(n=6 約束) | 1269 | **1.31** | 0.36 | 4.3% | ✓ |
+
+**(b) 的實測站數字最漂亮,但不能用。**它的其他 link 幾乎沒有車:
+
+```
+1466668326#0   21 vs 405  (−94.9%)
+260789408#0    46 vs 405  (−88.7%)
+1068183460#0   44 vs 267  (−83.6%)
+58976063#4    212 vs 405  (−47.7%)
+```
+
+只有 2 個約束時,routeSampler 只把車放在那兩條 link 的路徑上,**整條走廊的
+對向幾乎是空的**。對 V2V 卸載研究是致命的:鄰居發現、強車選擇、移動性斷線
+全部失去動態範圍。
+
+**採用 (c)。** 理由:
+1. 實測站(真實量測、無循環論證)的 GEH 為 1.31 / 0.36,遠低於合格門檻 5;
+2. 保留了合理的車輛密度(1269 vs (a) 的 1643),V2V 情境仍有意義;
+3. 其他 link 除 `1466668326#0` 外皆在 −12% 以內。
+
+**(c) 的已知缺陷**:`1466668326#0` 需求實現度僅 44.2%,且模擬有 13.4% 的車
+插不進路網。原因是**該 edge 只有 1 條車道**,而對向 `260789408#0` 是 3 車道 ——
+和平東路東段西向在現實中不可能是單線道,這是路網幾何缺陷(可能就是當初 netedit
+補路時用了預設車道數)。修正後應重跑 (c)。
+
+**論文寫法**:(c) 為主結果;(b) 放附錄當 sensitivity check,並說明
+「僅用獨立量測約束時 GEH 更低,但車輛數不足以支撐 V2V 情境」——
+這反而是「為何需要對向鏡射假設」的正面論證。
+
+> Traffic demand was estimated with SUMO's `routeSampler`, using link counts
+> from n=2 independently measured VD stations extended to the opposing and
+> adjacent links under the stated mirroring assumption (6 constraints in total).
+> Fidelity on the two independently measured links: GEH 1.31 and 0.36
+> (MAPE 4.3%), against the industry acceptance threshold of GEH < 5.
+> A variant constrained only by the 2 measured links reaches GEH 0.08/0.63 but
+> leaves the opposing direction nearly empty (−48% to −95% on four links) and
+> was therefore not used.
+
 ---
 
 ## 5. 證據二:同步延遲 τ(`run_dt_delay.py`)—— 「DT vs 普通模擬」的答案
