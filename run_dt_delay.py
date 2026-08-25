@@ -41,7 +41,7 @@ def plot_results(results, pol, tag):
     for pred in PREDICTORS:
         sr = [results[f"{pol}/{pred}/tau{t}"]["success"] for t in TAUS]
         lb = [results[f"{pol}/{pred}/tau{t}"]["link_break"] for t in TAUS]
-        pr = [max(results[f"{pol}/{pred}/tau{t}"]["pred_reject"], 0.5)
+        pr = [max(results[f"{pol}/{pred}/tau{t}"].get("stale_miss", 0), 0.5)
               for t in TAUS]   # 0 → 0.5 讓對數座標可畫
         axes[0].plot(TAUS, sr, "-o", color=colors[pred], label=f"{pred} predictor")
         axes[1].plot(TAUS, lb, "-o", color=colors[pred], label=f"{pred} predictor")
@@ -53,9 +53,9 @@ def plot_results(results, pol, tag):
     axes[1].set_ylabel("Runtime link breaks (all episodes)")
     axes[1].set_title("Mobility failures vs twin staleness")
     axes[2].set_xlabel("Digital-twin sync delay τ (s)")
-    axes[2].set_ylabel("Predicted-reject count (log)")
+    axes[2].set_ylabel("Stale-target offloads (log)")
     axes[2].set_yscale("log")
-    axes[2].set_title("Over-conservatism vs twin staleness")
+    axes[2].set_title("Stale-target selection vs twin staleness")
     for ax in axes:
         ax.grid(alpha=0.3); ax.legend()
     plt.tight_layout()

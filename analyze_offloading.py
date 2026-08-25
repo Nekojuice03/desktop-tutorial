@@ -258,6 +258,7 @@ def make_figures():
     labels = {"本地 local": "Local", "V2V 強車": "V2V-strong",
               "V2V 近車": "V2V-weak", "基站 RSU": "RSU", "雲端 cloud": "Cloud"}
     fig, ax = plt.subplots(figsize=(7, 5))
+    pts = []
     for disp, kind in OPTIONS:
         res = eval_option(nodes, geo, t, disp, kind)
         if res is None:
@@ -266,9 +267,12 @@ def make_figures():
         ax.scatter(res["latency"] * 1000, res["energy"], s=90,
                    color=("#b0b0b0" if miss else "#1565c0"),
                    edgecolor="black", zorder=3)
-        ax.annotate(labels[disp] + (" (miss)" if miss else ""),
-                    (res["latency"] * 1000, res["energy"]),
-                    textcoords="offset points", xytext=(8, 4), fontsize=9)
+        pts.append((res["latency"] * 1000, res["energy"],
+                    labels[disp] + (" (miss)" if miss else "")))
+    # 標註錯開:超時的選項(本地/弱車)延遲相近,標籤會疊在一起 → 依 x 排序上下交錯
+    for i, (x, y, lab) in enumerate(sorted(pts)):
+        ax.annotate(lab, (x, y), textcoords="offset points",
+                    xytext=(8, 5 + 13 * (i % 2)), fontsize=9)
     ax.axvline(prof["deadline"] * 1000, color="red", ls=":", alpha=0.7,
                label=f"deadline {prof['deadline']*1000:.0f} ms")
     ax.set_xlabel("Task latency (ms)  — lower is better")
