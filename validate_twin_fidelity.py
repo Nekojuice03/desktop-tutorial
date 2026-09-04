@@ -236,7 +236,7 @@ def load_vd_ground_truth(map_rows, edges_in_net, vd_xml=None, live_xml=None,
         live_text = fetch_gz(LIVE_VD_URL)
         live_src = archive_snapshot(live_text, "VD")
     else:
-        cands = sorted(glob.glob(os.path.join(SCRIPT_DIR, "traffic_data", "VD_*.xml")))
+        cands = sorted(glob.glob(os.path.join(SCRIPT_DIR, "traffic_data", "VD_*.xml*")))
         if cands:
             live_text = read_maybe_gz(cands[-1])
             live_src = cands[-1]
@@ -555,7 +555,7 @@ def check_snapshot(args):
         text = fetch_gz(STATIC_VD_URL)
         src = archive_snapshot(text, "GetVD")
     else:
-        cands = sorted(glob.glob(os.path.join(SCRIPT_DIR, "traffic_data", "GetVD_*.xml")))
+        cands = sorted(glob.glob(os.path.join(SCRIPT_DIR, "traffic_data", "GetVD_*.xml*")))
         if not cands:
             sys.exit("[錯誤] traffic_data/ 沒有 GetVD_*.xml 快照;"
                      "請用 --vd-xml 指定,或加 --fetch 現抓")

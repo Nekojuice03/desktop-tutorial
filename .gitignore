@@ -47,3 +47,6 @@ _cand_routes.rou.xml
 
 # RSU 配置敏感度掃描
 rsu_config_results.json
+
+# VD 連續蒐集產物(只 commit 論文實際用到的快照)
+traffic_data/vd_index.csv
