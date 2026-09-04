@@ -40,6 +40,7 @@ VD 快照連續蒐集(collect_vd.py)—— 長時間掛著抓台北市 VD 資料
 import argparse
 import csv
 import gzip
+import hashlib
 import io
 import os
 import re
@@ -62,11 +63,20 @@ SOURCES = [("VD", LIVE_VD_URL), ("GetVD", STATIC_VD_URL)]
 INDEX_COLS = ["exchange_time", "kind", "file", "units", "vol_all",
               "vol_mapped", "bytes"]
 
-_EXCHANGE_RE = re.compile(r"<ExchangeTime>([^<]+)</ExchangeTime>")
-_DEVICE_RE = re.compile(r"<DeviceID>([^<]+)</DeviceID>")
-_SVOL_RE = re.compile(r"<Svolume>([^<]+)</Svolume>")
-_SECID_RE = re.compile(r"<SectionId>([^<]+)</SectionId>")
-_TOTVOL_RE = re.compile(r"<TotalVol>([^<]+)</TotalVol>")
+# GetVDDATA 是無前綴的 <ExchangeTime>,GetVD 則是帶命名空間的 <vd:SectionData>
+# 之類的寫法 → 所有標籤比對都要容忍 "<字首:" 前綴,否則整支來源會被跳過。
+def _tag(*names):
+    return re.compile(r"<(?:\w+:)?(?:" + "|".join(names) + r")>([^<]*)<")
+
+
+_TIME_RE = _tag("ExchangeTime", "UpdateTime", "SrcUpdateTime",
+                "DataCollectTime", "PublishTime", "CollectTime")
+_DEVICE_RE = _tag("DeviceID")
+_SVOL_RE = _tag("Svolume")
+_SECID_RE = _tag("SectionId")
+_TOTVOL_RE = _tag("TotalVol")
+_SPLIT_DEVICE = re.compile(r"<(?:\w+:)?VDDevice>")
+_SPLIT_SECTION = re.compile(r"<(?:\w+:)?SectionData>")
 
 
 # ── 抓取 ──────────────────────────────────────────────────────────
@@ -80,18 +90,29 @@ def fetch_gz(url, timeout=30):
 
 # ── 解析(只用正則,不做完整 XML 剖析:500KB×288/天,省 CPU) ─────────
 def exchange_time(text):
-    """取資料自身的時戳 '2026/04/28T10:31:03' → '20260428_103103'。取不到回 None。"""
-    m = _EXCHANGE_RE.search(text)
+    """資料自身的時戳 '2026/04/28T10:31:03' → '20260428_103103';找不到回 None。"""
+    m = _TIME_RE.search(text)
     if not m:
         return None
     raw = m.group(1).strip()
-    for fmt in ("%Y/%m/%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y/%m/%d %H:%M:%S"):
+    for fmt in ("%Y/%m/%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y/%m/%d %H:%M:%S",
+                "%Y-%m-%d %H:%M:%S", "%Y/%m/%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S%z"):
         try:
             return datetime.strptime(raw, fmt).strftime("%Y%m%d_%H%M%S")
         except ValueError:
             continue
-    # 格式沒見過 → 退成安全檔名,至少不會漏存
-    return re.sub(r"[^0-9]", "", raw)[:14] or None
+    digits = re.sub(r"[^0-9]", "", raw)
+    if len(digits) >= 14:                      # 格式沒見過但數字夠 → 直接用
+        return f"{digits[:8]}_{digits[8:14]}"
+    return None
+
+
+def content_key(text):
+    """沒有可辨識時戳時的退路:用內容雜湊去重,檔名用下載時戳。
+
+    寧可存到「同一份資料的兩個檔名」,也不要像先前那樣整支來源被靜默跳過。
+    """
+    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:12]
 
 
 def read_mapped_ids():
@@ -120,7 +141,7 @@ def summarize_live(text, mapped):
     n_dev = 0
     all_sv = 0.0
     map_sv = 0.0
-    for chunk in text.split("<VDDevice>")[1:]:
+    for chunk in _SPLIT_DEVICE.split(text)[1:]:
         m = _DEVICE_RE.search(chunk)
         if not m:
             continue
@@ -143,7 +164,7 @@ def summarize_static(text, mapped):
     n_sec = 0
     all_v = 0.0
     map_v = 0.0
-    for chunk in text.split("<SectionData>")[1:]:
+    for chunk in _SPLIT_SECTION.split(text)[1:]:
         m = _SECID_RE.search(chunk)
         t = _TOTVOL_RE.search(chunk)
         if not m or not t:
@@ -227,6 +248,7 @@ def main():
     print(f"存放:{DATA_DIR}\n")
 
     last_stamp = {k: None for k, _ in sources}
+    warned = {k: False for k, _ in sources}
     saved = {k: 0 for k, _ in sources}
     backoff = args.poll
     polls = 0
@@ -251,12 +273,20 @@ def main():
                     continue
 
                 stamp = exchange_time(text)
+                key = stamp
                 if stamp is None:
-                    print(f"[{datetime.now():%H:%M:%S}] {kind} 無 ExchangeTime,略過")
-                    continue
-                if stamp == last_stamp[kind]:
+                    # 認不出時戳 → 改用內容雜湊去重,檔名退回下載時戳。
+                    key = content_key(text)
+                    stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
+                    if not warned[kind]:
+                        warned[kind] = True
+                        tags = ", ".join(dict.fromkeys(
+                            re.findall(r"<((?:\w+:)?[A-Za-z][\w.-]*)>", text[:1500])))
+                        print(f"[注意] {kind} 找不到可辨識的時戳欄位,改用內容雜湊去重"
+                              f"(仍會正常存檔)。開頭出現的標籤:{tags[:200]}")
+                if key == last_stamp[kind]:
                     continue                                # 資料還沒更新
-                last_stamp[kind] = stamp
+                last_stamp[kind] = key
 
                 path = save_snapshot(text, kind, stamp, use_gzip)
                 if path is None:
