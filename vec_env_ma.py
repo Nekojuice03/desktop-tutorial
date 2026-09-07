@@ -39,6 +39,8 @@ from vec_env import (MockWorld, TraciWorld, _clip01,
 
 # 多智能體專用的動作集(5 個，V2V 拆強/近)
 MA_ACTIONS = ["local", "v2v_strong", "v2v_near", "rsu", "cloud"]
+TURN_HEADING_DEG = 30.0   # 航向變化超過此角度 → 該次斷線歸因為「轉向」
+
 MA_N_FEATURES = 19   # +1 回程佇列等待、+1 範圍內鄰居數(資源競爭程度)
 MAX_AGENTS_NORM = 20.0
 
@@ -492,6 +494,9 @@ class VECMultiEnv:
                 "t_done": now + r["latency"],   # now 已含指派跳時刻
                 "total": total, "energy": energy, "cost": r["cost"],
                 "pred_reward": reward, "w": w,
+                # 歸因用:決策當下的真實航向(物理側)。只寫統計,不回饋決策。
+                "ang0": {vid: (self.veh_states.get(vid) or {}).get("angle")
+                         for vid in (ctx["holder_id"], tid)},
             })
             return reward
 
@@ -601,6 +606,33 @@ class VECMultiEnv:
         self._settle_delta += new_reward - f["pred_reward"]
         return True
 
+    def _heading_delta(self, f, vid, cur):
+        """該車從決策當下到結算時刻的航向變化量(度);資料不足回 None。"""
+        a0 = (f.get("ang0") or {}).get(vid)
+        if a0 is None or cur is None:
+            return None
+        return abs((float(cur) - float(a0) + 180.0) % 360.0 - 180.0)
+
+    def _classify_v2v_break(self, f, hp, ep):
+        """V2V 斷線歸因 —— 「路口轉向導致任務丟失」這個宣稱要靠這組數字撐。
+
+        四類互斥:持有車離場、執行車離場、雙方都在但轉向拉開、雙方都在且
+        近乎同向(純相對速度拉開)。前兩類是模擬邊界效應(despawn),不是
+        移動性預測問題;只有 break_turn 才是「路口轉向」。
+        """
+        if hp is None:
+            self.stats["break_consumer_left"] += 1
+            return
+        if ep is None:
+            self.stats["break_helper_left"] += 1
+            return
+        ds = [d for d in (self._heading_delta(f, f["holder"], hp.get("angle")),
+                          self._heading_delta(f, f["helper"], ep.get("angle")))
+              if d is not None]
+        turn = max(ds) if ds else 0.0
+        self.stats["break_turn" if turn >= TURN_HEADING_DEG
+                   else "break_straight"] += 1
+
     def _settle_one(self, f):
         task = f["task"]
         hp = self.veh_states.get(f["holder"])
@@ -654,6 +686,7 @@ class VECMultiEnv:
         #   執行車離場 → 「優雅退場交接」：車輛抵達不是瞬間蒸發，離場前可把結果
         #     交給其最後位置附近的 RSU(用 _last_seen 快取) → 仍可走 V2I 遷移。
         self.stats["link_break"] += 1
+        self._classify_v2v_break(f, hp, ep)
         if hp is None:
             self.stats["consumer_left"] += 1   # 車主離場事件
             if self.arrival_delivery and self._deliver_to_departed(f):
@@ -746,6 +779,11 @@ class VECMultiEnv:
                       "arrival_delivered": 0,  # 其中經「抵達補送」救回者(break_recovered 子類)
                       "rsu_handover": 0,     # RSU/雲結果經「換手」由新服務基站送達(非斷線)
                       "stale_miss": 0,       # ★孿生過期直接害死的卸載(孿生內、物理外)
+                      # ── V2V 斷線歸因(互斥四類,合計 = V2V 的 link_break) ──
+                      "break_consumer_left": 0,  # 持有車離場(模擬邊界效應)
+                      "break_helper_left": 0,    # 執行車離場(模擬邊界效應)
+                      "break_turn": 0,           # ★雙方仍在場、航向拉開 → 路口轉向
+                      "break_straight": 0,       # 雙方仍在場、近乎同向 → 純相對速度
                       "fb_no_server": 0,     # fallback 成因:範圍內沒有任何 server
                       "fb_saturated": 0,     # fallback 成因:有 server 但本 tick 全被佔用
                       "latency_sum": 0.0, "latency_n": 0,
@@ -846,6 +884,10 @@ class VECMultiEnv:
                 "arrival_delivered": s["arrival_delivered"],
                 "rsu_handover": s["rsu_handover"],
                 "stale_miss": s["stale_miss"],
+                "break_consumer_left": s["break_consumer_left"],
+                "break_helper_left": s["break_helper_left"],
+                "break_turn": s["break_turn"],
+                "break_straight": s["break_straight"],
                 "fallback": s["fallback"],
                 "fb_no_server": s["fb_no_server"],
                 "fb_saturated": s["fb_saturated"],
