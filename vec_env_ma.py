@@ -28,7 +28,8 @@ from infra_config import (VEHICLE_CPU, STRONG_VEHICLE_CPU, STRONG_RATIO,
                           STRONG_VEHICLE_ENERGY_PER_CYCLE,
                           V2V_LINK, V2I_LINK, V2V_RANGE_M, RSU_RANGE_M,
                           V2V_EXTRA_LATENCY, RSU_EXTRA_LATENCY,
-                          TX_POWER_W, load_rsus)
+                          TX_POWER_W, RSU_TX_POWER_W, CLOUD_BACKHAUL_POWER_W,
+                          load_rsus)
 from run_baseline import is_server, is_strong
 # 重用 Stage A 的世界來源、正規化常數、獎勵參數
 from vec_env import (MockWorld, TraciWorld, _clip01,
@@ -61,6 +62,10 @@ class VECMultiEnv:
                      residual lifetime, IEEE VTC 2016)
           "route"  = 疊加「路線分歧+離場時間」(需 V2X 意圖分享=已知路線，
                      oracle 上界；SUMO 模式才有 route，mock 退回 linear)
+          "kalman+route" = 兩者並用:先由 EKF-CTRV 前推(含 τ 補償)得連線
+                     壽命,再取路線分歧/離場時間的下限。先前 kalman 與
+                     route 是互斥分支(走 kalman 就永遠碰不到路線資訊),
+                     此選項才是「軌跡預測 + 路線意圖」的實際組合。
         recovery：V2V 任務在完成時刻「實際已斷線」時的恢復策略(消融用)
           "fail" = 直接失敗(最保守)
           "v2i"  = 結果經 V2I 遷移接續(執行車→RSU→持有車)，付遷移延遲/能耗
@@ -147,16 +152,20 @@ class VECMultiEnv:
         否則退回等速外推(linear baseline / mock)。觀測、決策、greedy 都走這裡，
         所以升級預判器時 agent 的 contact 特徵會同步變準。
         """
-        if self.predictor == "kalman":
+        c = None
+        if self.predictor in ("kalman", "kalman+route"):
             # 可部署層：EKF-CTRV 前推(含轉彎率) → 預測連線壽命。
             # 追蹤器未熱身(<3 筆量測)時退回等速外推。
             ta, tb = self._trackers.get(a_id), self._trackers.get(b_id)
             if ta is not None and tb is not None and ta.ready and tb.ready:
                 # lead=τ：孿生知道量測舊了 τ 秒 → dead-reckon 前推補償(DT 的實質貢獻)
                 lead = self.obs_delay * getattr(self.world, "dt", 1.0)
-                return predict_contact(ta, tb, V2V_RANGE_M, lead=lead)
-        c = self._contact(a_id, a_pos, b_id, b_pos)
-        if self.predictor == "route":
+                c = predict_contact(ta, tb, V2V_RANGE_M, lead=lead)
+            else:
+                self.stats["kf_cold"] += 1      # 追蹤器未熱身 → 這次退回等速外推
+        if c is None:
+            c = self._contact(a_id, a_pos, b_id, b_pos)
+        if self.predictor in ("route", "kalman+route"):
             t_div = self.world.route_divergence_time(a_id, b_id)
             if t_div is not None:
                 c = min(c, t_div)
@@ -172,17 +181,21 @@ class VECMultiEnv:
             return self._pair_contact(ctx["holder_id"], ctx["holder_pos"], tid, tpos)
         if kind in ("rsu", "cloud"):
             # V2I 與 V2V 同一套預判階梯(對稱)；動態一律取孿生視角(受 τ 影響)
-            if self.predictor == "kalman":
+            c = None
+            if self.predictor in ("kalman", "kalman+route"):
                 tr = self._trackers.get(ctx["holder_id"])
                 if tr is not None and tr.ready:
                     lead = self.obs_delay * getattr(self.world, "dt", 1.0)
-                    return predict_contact_static(tr, tpos, RSU_RANGE_M, lead=lead)
-            hs = self.twin_states.get(ctx["holder_id"])
-            hpos = hs["pos"] if hs else ctx["holder_pos"]
-            hv = (velocity_from_speed_angle(hs["speed"], hs["angle"])
-                  if hs else (0.0, 0.0))
-            c = contact_time(hpos, hv, tpos, (0.0, 0.0), RSU_RANGE_M)
-            if self.predictor == "route":
+                    c = predict_contact_static(tr, tpos, RSU_RANGE_M, lead=lead)
+                else:
+                    self.stats["kf_cold"] += 1
+            if c is None:
+                hs = self.twin_states.get(ctx["holder_id"])
+                hpos = hs["pos"] if hs else ctx["holder_pos"]
+                hv = (velocity_from_speed_angle(hs["speed"], hs["angle"])
+                      if hs else (0.0, 0.0))
+                c = contact_time(hpos, hv, tpos, (0.0, 0.0), RSU_RANGE_M)
+            if self.predictor in ("route", "kalman+route"):
                 t_exit = self.world.route_exit_time(ctx["holder_id"])
                 if t_exit is not None:
                     c = min(c, t_exit)   # 持有車離場前必須收到結果
@@ -311,7 +324,7 @@ class VECMultiEnv:
         for vid, s in veh_states.items():
             self._last_seen[vid] = s["pos"]
         # 卡曼追蹤：把「孿生收到的」BSM 量測餵進各車的 EKF-CTRV(受 τ 影響)
-        if self.predictor == "kalman":
+        if self.predictor in ("kalman", "kalman+route"):
             dt = getattr(self.world, "dt", 1.0)
             for vid, s in self.twin_states.items():
                 vx, vy = velocity_from_speed_angle(s["speed"], s["angle"])
@@ -593,9 +606,16 @@ class VECMultiEnv:
             if t_up == INF:
                 return False
             tx_time += t_up
-        extra = RSU_EXTRA_LATENCY + tx_time
+        # 執行端上行(若是 V2V)→骨幹→車主停靠處 RSU→車主下行。
+        # n_access:V2V 要兩次基站存取;結果已在基礎設施內則只需一次。
+        n_access = 2 if f["mode"] == "v2v" else 1
+        bh, bh_e = self._backhaul_hop(task.result_bits, f["t_done"])
+        extra = n_access * RSU_EXTRA_LATENCY + bh + tx_time
         new_total = f["total"] + extra
-        new_energy = f["energy"] + TX_POWER_W * tx_time
+        # tx_time 已含上行(車,若有)與下行(RSU)兩段,依發射端分別計功率
+        up_part = tx_time - t_dn
+        new_energy = (f["energy"] + TX_POWER_W * up_part
+                      + RSU_TX_POWER_W * t_dn + bh_e)
         ok = new_total <= task.deadline_s
         self.stats["break_recovered"] += 1
         self.stats["arrival_delivered"] += 1
@@ -605,6 +625,19 @@ class VECMultiEnv:
                        + COST_W * f["cost"]) - (0.0 if ok else w * PENALTY_MISS)
         self._settle_delta += new_reward - f["pred_reward"]
         return True
+
+    def _backhaul_hop(self, bits, arrival):
+        """RSU↔RSU 有線骨幹的一跳:排隊 + 傳輸 + 能耗,並實際佔用共享鏈路。
+
+        中繼是本研究恢復機制的核心。先前這一跳被當成零成本(「RSU 間走有線
+        骨幹,忽略」),救援因此永遠划算,recovery="v2i" 必勝也就沒有資訊量。
+        改成與上雲共用同一條有限容量骨幹後,中繼會在骨幹壅塞時自己失去吸引力,
+        才談得上「什麼條件下該中繼」。回傳 (額外延遲秒, 額外能耗焦耳)。
+        """
+        wait = self.nodes.wait_time("backhaul", arrival)
+        tx = self.nodes.link_service_time("backhaul", bits)
+        self.nodes.commit_link("backhaul", arrival, bits)
+        return wait + tx, CLOUD_BACKHAUL_POWER_W * tx
 
     def _heading_delta(self, f, vid, cur):
         """該車從決策當下到結算時刻的航向變化量(度);資料不足回 None。"""
@@ -656,9 +689,12 @@ class VECMultiEnv:
                 t_dn = transmission_delay(task.result_bits,
                                           distance(hp["pos"], p2), V2I_LINK)
                 if t_dn != INF:
-                    extra = RSU_EXTRA_LATENCY + t_dn
+                    # 結果先由原服務基站經有線骨幹送到新基站,再無線下行給車。
+                    bh, bh_e = self._backhaul_hop(task.result_bits, f["t_done"])
+                    extra = RSU_EXTRA_LATENCY + bh + t_dn
                     new_total = f["total"] + extra
-                    new_energy = f["energy"] + TX_POWER_W * t_dn
+                    # 下行發射端是路側設備 → 用 RSU 功率(與 nodes.estimate 一致)
+                    new_energy = f["energy"] + RSU_TX_POWER_W * t_dn + bh_e
                     ok = new_total <= task.deadline_s
                     self.stats["rsu_handover"] += 1
                     self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
@@ -704,9 +740,13 @@ class VECMultiEnv:
                     t_dn = transmission_delay(task.result_bits,
                                               distance(hp["pos"], p2), V2I_LINK)
                     if t_up != INF and t_dn != INF:
-                        extra = RSU_EXTRA_LATENCY + t_up + t_dn  # RSU 間走有線骨幹，忽略
+                        # 執行車→RSU(上行) →骨幹→ 持有車側 RSU→持有車(下行)。
+                        # 兩段無線各付一次基站存取;中間那跳走有限容量骨幹。
+                        bh, bh_e = self._backhaul_hop(task.result_bits, f["t_done"])
+                        extra = 2 * RSU_EXTRA_LATENCY + t_up + bh + t_dn
                         new_total = f["total"] + extra
-                        new_energy = f["energy"] + TX_POWER_W * (t_up + t_dn)
+                        new_energy = (f["energy"] + TX_POWER_W * t_up
+                                      + RSU_TX_POWER_W * t_dn + bh_e)
                         ok = new_total <= task.deadline_s
                         self.stats["break_recovered"] += 1
                         self._finalize(new_total, new_energy, f["cost"], task, ok=ok)
@@ -784,6 +824,7 @@ class VECMultiEnv:
                       "break_helper_left": 0,    # 執行車離場(模擬邊界效應)
                       "break_turn": 0,           # ★雙方仍在場、航向拉開 → 路口轉向
                       "break_straight": 0,       # 雙方仍在場、近乎同向 → 純相對速度
+                      "kf_cold": 0,          # EKF 未熱身(<3 筆量測)而退回等速外推的次數
                       "fb_no_server": 0,     # fallback 成因:範圍內沒有任何 server
                       "fb_saturated": 0,     # fallback 成因:有 server 但本 tick 全被佔用
                       "latency_sum": 0.0, "latency_n": 0,
@@ -888,6 +929,7 @@ class VECMultiEnv:
                 "break_helper_left": s["break_helper_left"],
                 "break_turn": s["break_turn"],
                 "break_straight": s["break_straight"],
+                "kf_cold": s["kf_cold"],
                 "fallback": s["fallback"],
                 "fb_no_server": s["fb_no_server"],
                 "fb_saturated": s["fb_saturated"],

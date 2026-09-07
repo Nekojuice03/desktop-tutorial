@@ -31,10 +31,14 @@ COMBOS = [("linear", "fail", False), ("linear", "v2i", False),
           ("kalman", "fail", False), ("kalman", "v2i", False),
           ("kalman", "v2i", True),
           ("route", "fail", False), ("route", "v2i", False),
-          ("route", "v2i", True)]
+          ("route", "v2i", True),
+          ("kalman+route", "v2i", False), ("kalman+route", "v2i", True)]
 EVENT_KEYS = ("pred_reject", "link_break", "break_recovered", "break_failed",
               "consumer_left", "arrival_delivered", "rsu_handover",
-              "stale_miss")   # ★孿生過期直接害死的卸載(obs_delay>0 才會非零)
+              "stale_miss",   # ★孿生過期直接害死的卸載(obs_delay>0 才會非零)
+              # 斷線歸因(互斥四類)+ EKF 未熱身次數
+              "break_consumer_left", "break_helper_left",
+              "break_turn", "break_straight", "kf_cold")
 
 
 def run_episodes(env, mode, algo=None, episodes=6, seed0=2000):
